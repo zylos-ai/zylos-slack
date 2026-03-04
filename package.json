@@ -1,0 +1,26 @@
+{
+  "name": "zylos-slack",
+  "version": "0.1.0",
+  "description": "Slack communication channel for Zylos",
+  "type": "module",
+  "main": "src/index.js",
+  "scripts": {
+    "start": "node src/index.js",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "homepage": "https://github.com/zylos-ai/zylos-slack#readme",
+  "bugs": { "url": "https://github.com/zylos-ai/zylos-slack/issues" },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/zylos-ai/zylos-slack.git"
+  },
+  "keywords": ["zylos", "slack", "agent", "communication"],
+  "author": "Zylos AI",
+  "license": "MIT",
+  "engines": { "node": ">=20.0.0" },
+  "dependencies": {
+    "@slack/bolt": "^4.1.0",
+    "@slack/web-api": "^7.8.0",
+    "dotenv": "^16.4.5"
+  }
+}
