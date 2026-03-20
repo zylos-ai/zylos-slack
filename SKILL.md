@@ -40,11 +40,6 @@ config:
     - name: SLACK_APP_TOKEN
       description: "Slack app-level token (xapp-...) for Socket Mode"
       sensitive: true
-  optional:
-    - name: SLACK_SIGNING_SECRET
-      description: "Slack signing secret (required for webhook mode)"
-      sensitive: true
-
 dependencies:
   - comm-bridge
 ---
@@ -67,7 +62,6 @@ Slack communication channel for Zylos. Supports DM and channel messages via Sock
 ```bash
 SLACK_BOT_TOKEN=xoxb-...        # Bot User OAuth Token
 SLACK_APP_TOKEN=xapp-...        # App-Level Token (Socket Mode)
-SLACK_SIGNING_SECRET=...        # Signing Secret (webhook mode)
 ```
 
 ### Runtime Config (~/zylos/components/slack/config.json)

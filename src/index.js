@@ -47,8 +47,6 @@ if (!config.enabled) {
 // Validate credentials
 const botToken = process.env.SLACK_BOT_TOKEN;
 const appToken = process.env.SLACK_APP_TOKEN;
-const signingSecret = process.env.SLACK_SIGNING_SECRET;
-
 if (!botToken) {
   console.error('[slack] SLACK_BOT_TOKEN not set in .env');
   process.exit(1);
@@ -56,11 +54,6 @@ if (!botToken) {
 
 if (config.connection_mode === 'socket' && !appToken) {
   console.error('[slack] SLACK_APP_TOKEN not set in .env (required for Socket Mode)');
-  process.exit(1);
-}
-
-if (config.connection_mode === 'webhook' && !signingSecret) {
-  console.error('[slack] SLACK_SIGNING_SECRET not set in .env (required for webhook mode)');
   process.exit(1);
 }
 
@@ -81,7 +74,6 @@ async function main() {
     token: botToken,
     appToken: config.connection_mode === 'socket' ? appToken : undefined,
     socketMode: config.connection_mode === 'socket',
-    signingSecret: config.connection_mode === 'webhook' ? signingSecret : undefined,
     port: config.connection_mode === 'webhook' ? config.webhook_port : undefined,
   };
 
