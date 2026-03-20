@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.1.1 (2026-03-20)
+
+- Remove SLACK_SIGNING_SECRET (not needed for Socket Mode connection)
+
 ## 0.1.0 (2026-03-04)
 
 - Initial release
