@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.1.2 (2026-09-02)
 
 - Fix mention-mode channels responding to unmentioned owner messages
 - Preserve Slack mentions as readable `@display-name` text instead of deleting them

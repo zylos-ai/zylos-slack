@@ -1,6 +1,6 @@
 {
   "name": "zylos-slack",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Slack communication channel for Zylos",
   "type": "module",
   "main": "src/index.js",
