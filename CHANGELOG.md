@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+- Fix mention-mode channels responding to unmentioned owner messages
+- Preserve Slack mentions as readable `@display-name` text instead of deleting them
+- Deduplicate overlapping `message` and `app_mention` events for the same Slack message
+
 ## 0.1.1 (2026-03-20)
 
 - Remove SLACK_SIGNING_SECRET (not needed for Socket Mode connection)

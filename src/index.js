@@ -14,6 +14,9 @@ import {
   addReaction, removeReaction, downloadFile, getUserName,
   fetchHistory, fetchThread,
 } from './lib/message.js';
+import {
+  getMessageDedupKey, isBotMentioned, resolveUserMentions, shouldHandleGroupMessage,
+} from './lib/mentions.js';
 
 // ── Constants ──
 
@@ -86,7 +89,7 @@ async function main() {
     if (event.user === getBotUserId()) return;
 
     // Dedup
-    const msgKey = event.client_msg_id || `${event.channel}-${event.ts}`;
+    const msgKey = getMessageDedupKey(event);
     if (dedupMap.has(msgKey)) return;
     dedupMap.set(msgKey, Date.now());
 
@@ -95,7 +98,7 @@ async function main() {
     if (channelType === 'im') {
       await handleDM(event);
     } else {
-      await handleGroupMessage(event);
+      await handleGroupMessage(event, isBotMentioned(event.text, getBotUserId()));
     }
   });
 
@@ -103,7 +106,7 @@ async function main() {
   app.event('app_mention', async ({ event }) => {
     if (event.bot_id || event.user === getBotUserId()) return;
 
-    const msgKey = `mention-${event.channel}-${event.ts}`;
+    const msgKey = getMessageDedupKey(event);
     if (dedupMap.has(msgKey)) return;
     dedupMap.set(msgKey, Date.now());
 
@@ -260,8 +263,8 @@ async function handleGroupMessage(event, isMention = false) {
   const mode = groupConfig?.mode || 'mention';
   const groupName = groupConfig?.name || channelId;
 
-  // In mention mode, only respond to @mentions
-  if (mode === 'mention' && !isMention && !isOwner) return;
+  // Owner bypass applies to access control, not to the channel's trigger mode.
+  if (!shouldHandleGroupMessage(mode, isMention)) return;
 
   // Smart mode: receive all but flag non-mentions
   const isSmartNoMention = mode === 'smart' && !isMention;
@@ -283,7 +286,9 @@ async function handleGroupMessage(event, isMention = false) {
     }
   }
 
-  const text = (event.text || '').replace(/<@[A-Z0-9]+>/g, '').trim(); // strip @mentions
+  // Slack sends mentions as <@USER_ID>. Keep their readable names in the
+  // prompt instead of deleting every mentioned person (including the bot).
+  const text = (await resolveUserMentions(event.text || '', getUserName)).trim();
   if (text) content += text;
   if (!content.trim() && !fileLine) return;
 
