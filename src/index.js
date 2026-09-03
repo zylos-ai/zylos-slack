@@ -20,6 +20,7 @@ import {
 import {
   CONNECTION_MODE, DM_POLICY, ENDPOINT_TYPE, GROUP_MODE, SLACK_CHANNEL_TYPE,
 } from './lib/constants.js';
+import { MessageDeduplicator } from './lib/dedup.js';
 import { isGroupAccessAllowed } from './lib/policy.js';
 
 // ── Constants ──
@@ -31,7 +32,7 @@ const MEDIA_DIR = path.join(DATA_DIR, 'media');
 const TYPING_DIR = path.join(DATA_DIR, 'typing');
 
 const DEDUP_TTL = 5 * 60 * 1000; // 5 minutes
-const dedupMap = new Map();
+const messageDeduplicator = new MessageDeduplicator({ ttlMs: DEDUP_TTL });
 
 // In-memory chat histories for context
 const chatHistories = new Map();
@@ -92,18 +93,16 @@ async function main() {
     if (event.bot_id || event.subtype) return;
     if (event.user === getBotUserId()) return;
 
-    // Dedup
     const msgKey = getMessageDedupKey(event);
-    if (dedupMap.has(msgKey)) return;
-    dedupMap.set(msgKey, Date.now());
+    await messageDeduplicator.run(msgKey, async () => {
+      const channelType = event.channel_type; // 'im' for DM, 'channel'/'group' for channels
 
-    const channelType = event.channel_type; // 'im' for DM, 'channel'/'group' for channels
-
-    if (channelType === SLACK_CHANNEL_TYPE.DIRECT_MESSAGE) {
-      await handleDM(event);
-    } else {
-      await handleGroupMessage(event, isBotMentioned(event.text, getBotUserId()));
-    }
+      if (channelType === SLACK_CHANNEL_TYPE.DIRECT_MESSAGE) {
+        await handleDM(event);
+      } else {
+        await handleGroupMessage(event, isBotMentioned(event.text, getBotUserId()));
+      }
+    });
   });
 
   // ── Event: App Mention (in channels) ──
@@ -111,10 +110,7 @@ async function main() {
     if (event.bot_id || event.user === getBotUserId()) return;
 
     const msgKey = getMessageDedupKey(event);
-    if (dedupMap.has(msgKey)) return;
-    dedupMap.set(msgKey, Date.now());
-
-    await handleGroupMessage(event, true);
+    await messageDeduplicator.run(msgKey, () => handleGroupMessage(event, true));
   });
 
   // Start the app
@@ -131,13 +127,9 @@ async function main() {
     }
   });
 
-  // Cleanup dedup map periodically
-  setInterval(() => {
-    const now = Date.now();
-    for (const [key, ts] of dedupMap) {
-      if (now - ts > DEDUP_TTL) dedupMap.delete(key);
-    }
-  }, 60_000);
+  // Cleanup completed dedup entries periodically. Processing entries remain
+  // owned by their active handler and are released immediately on failure.
+  setInterval(() => messageDeduplicator.cleanup(), 60_000);
 
   // Typing indicator check (every 2s)
   setInterval(checkTypingDone, 2000);
@@ -234,7 +226,7 @@ async function handleDM(event) {
   const c4Message = `[Slack DM] ${userName} said: ${fullContent}`;
 
   // Send to C4
-  sendToC4('slack', endpoint, c4Message, (rejectMsg) => {
+  await sendToC4('slack', endpoint, c4Message, (rejectMsg) => {
     removeReaction(event.channel, event.ts, 'hourglass_flowing_sand');
     console.warn(`[slack] C4 rejected DM from ${userName}: ${rejectMsg}`);
   });
@@ -328,7 +320,7 @@ async function handleGroupMessage(event, isMention = false) {
   const fullContent = `<current-message>\n${groupContext}${content}\n</current-message>${fileLine}`;
   const c4Message = `[Slack GROUP:${groupName}] ${userName} said: ${fullContent}${smartHint}`;
 
-  sendToC4('slack', endpoint, c4Message, (rejectMsg) => {
+  await sendToC4('slack', endpoint, c4Message, (rejectMsg) => {
     if (isMention || !isSmartNoMention) {
       removeReaction(event.channel, event.ts, 'hourglass_flowing_sand');
     }
@@ -338,42 +330,59 @@ async function handleGroupMessage(event, isMention = false) {
 
 // ── C4 Integration ──
 
-function sendToC4(source, endpoint, content, onReject) {
+function execC4(cmd, timeout) {
+  return new Promise(resolve => {
+    exec(cmd, { encoding: 'utf8', timeout }, (error, stdout) => {
+      resolve({ error, stdout });
+    });
+  });
+}
+
+function getC4Rejection(error, stdout) {
+  try {
+    const response = JSON.parse(error?.stdout || stdout);
+    if (response?.ok === false) return response.error?.message || 'Rejected by C4';
+  } catch {}
+  return null;
+}
+
+async function sendToC4(source, endpoint, content, onReject) {
   const safeContent = content.replace(/'/g, "'\\''");
   const cmd = `node "${C4_RECEIVE}" --channel "${source}" --endpoint "${endpoint}" --json --content '${safeContent}'`;
 
   const timeout = 35_000;
+  const firstAttempt = await execC4(cmd, timeout);
 
-  exec(cmd, { encoding: 'utf8', timeout }, (error, stdout) => {
-    if (!error) {
-      console.log(`[slack] Sent to C4: ${content.substring(0, 60)}...`);
-      return;
-    }
+  if (!firstAttempt.error) {
+    console.log(`[slack] Sent to C4: ${content.substring(0, 60)}...`);
+    return;
+  }
 
-    // Handle rejection
-    try {
-      const response = JSON.parse(error.stdout || stdout);
-      if (response?.ok === false) {
-        console.warn(`[slack] C4 rejected: ${response.error?.message}`);
-        if (onReject) onReject(response.error?.message);
-        return;
-      }
-    } catch {}
+  const rejection = getC4Rejection(firstAttempt.error, firstAttempt.stdout);
+  if (rejection) {
+    console.warn(`[slack] C4 rejected: ${rejection}`);
+    if (onReject) onReject(rejection);
+    return;
+  }
 
-    // Retry once after 2s
-    console.warn(`[slack] C4 send failed, retrying: ${error.message}`);
-    setTimeout(() => {
-      exec(cmd, { encoding: 'utf8', timeout }, (retryError) => {
-        if (!retryError) return;
-        try {
-          const response = JSON.parse(retryError.stdout);
-          if (response?.ok === false && onReject) {
-            onReject(response.error?.message);
-          }
-        } catch {}
-      });
-    }, 2000);
-  });
+  console.warn(`[slack] C4 send failed, retrying: ${firstAttempt.error.message}`);
+  await new Promise(resolve => setTimeout(resolve, 2000));
+
+  const retryAttempt = await execC4(cmd, timeout);
+  if (!retryAttempt.error) {
+    console.log(`[slack] Sent to C4 after retry: ${content.substring(0, 60)}...`);
+    return;
+  }
+
+  const retryRejection = getC4Rejection(retryAttempt.error, retryAttempt.stdout);
+  if (retryRejection) {
+    console.warn(`[slack] C4 rejected: ${retryRejection}`);
+    if (onReject) onReject(retryRejection);
+    return;
+  }
+
+  console.warn(`[slack] C4 send failed after retry: ${retryAttempt.error.message}`);
+  throw retryAttempt.error;
 }
 
 // ── Typing Indicator ──

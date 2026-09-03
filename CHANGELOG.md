@@ -11,6 +11,11 @@
 ### Fixed
 
 - Enforce `groupPolicy=disabled` for every channel sender, including the owner
+- Track deduplication as `processing`/`done`, release failed keys, and let waiting equivalent events retry
+
+### Security
+
+- Refresh production dependency resolutions to remove all findings from `npm audit --omit=dev`
 
 ## 0.1.2 (2026-09-02)
 

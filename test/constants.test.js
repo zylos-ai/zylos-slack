@@ -6,6 +6,8 @@ import {
   CLI_TOGGLE_VALUES,
   CONNECTION_MODE,
   CONNECTION_MODE_VALUES,
+  DEDUP_STATE,
+  DEDUP_STATE_VALUES,
   DM_POLICY,
   DM_POLICY_VALUES,
   ENDPOINT_TYPE,
@@ -20,6 +22,7 @@ import {
 
 const enumCases = [
   [CONNECTION_MODE, CONNECTION_MODE_VALUES, ['socket', 'webhook']],
+  [DEDUP_STATE, DEDUP_STATE_VALUES, ['processing', 'done']],
   [DM_POLICY, DM_POLICY_VALUES, ['open', 'allowlist', 'owner']],
   [GROUP_POLICY, GROUP_POLICY_VALUES, ['disabled', 'allowlist', 'open']],
   [GROUP_MODE, GROUP_MODE_VALUES, ['mention', 'smart']],

@@ -53,3 +53,9 @@ export const CLI_TOGGLE = Object.freeze({
   OFF: 'off',
 });
 export const CLI_TOGGLE_VALUES = enumValues(CLI_TOGGLE);
+
+export const DEDUP_STATE = Object.freeze({
+  PROCESSING: 'processing',
+  DONE: 'done',
+});
+export const DEDUP_STATE_VALUES = enumValues(DEDUP_STATE);
