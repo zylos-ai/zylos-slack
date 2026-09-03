@@ -12,6 +12,8 @@
 
 - Enforce `groupPolicy=disabled` for every channel sender, including the owner
 - Track deduplication as `processing`/`done`, release failed keys, and let waiting equivalent events retry
+- Classify C4 structured failures so permanent input errors stop immediately while transient failures retry
+- Persist Slack-to-C4 deliveries before processing, recover pending records after restart, and dead-letter exhausted retries
 
 ### Security
 

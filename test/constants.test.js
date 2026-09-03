@@ -2,12 +2,16 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
+  C4_ERROR_CODE,
+  C4_ERROR_CODE_VALUES,
   CLI_TOGGLE,
   CLI_TOGGLE_VALUES,
   CONNECTION_MODE,
   CONNECTION_MODE_VALUES,
   DEDUP_STATE,
   DEDUP_STATE_VALUES,
+  DELIVERY_STATE,
+  DELIVERY_STATE_VALUES,
   DM_POLICY,
   DM_POLICY_VALUES,
   ENDPOINT_TYPE,
@@ -21,8 +25,10 @@ import {
 } from '../src/lib/constants.js';
 
 const enumCases = [
+  [C4_ERROR_CODE, C4_ERROR_CODE_VALUES, ['INVALID_ARGS', 'INTERNAL_ERROR', 'UNHEALTHY_NOTIFY_FAILED', 'TRANSPORT_ERROR']],
   [CONNECTION_MODE, CONNECTION_MODE_VALUES, ['socket', 'webhook']],
   [DEDUP_STATE, DEDUP_STATE_VALUES, ['processing', 'done']],
+  [DELIVERY_STATE, DELIVERY_STATE_VALUES, ['pending', 'delivered', 'dead_letter']],
   [DM_POLICY, DM_POLICY_VALUES, ['open', 'allowlist', 'owner']],
   [GROUP_POLICY, GROUP_POLICY_VALUES, ['disabled', 'allowlist', 'open']],
   [GROUP_MODE, GROUP_MODE_VALUES, ['mention', 'smart']],
