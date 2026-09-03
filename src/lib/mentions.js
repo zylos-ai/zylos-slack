@@ -1,3 +1,5 @@
+import { GROUP_MODE } from './constants.js';
+
 const SLACK_USER_MENTION_PATTERN = /<@([A-Z0-9]+)(?:\|([^>]+))?>/g;
 
 /**
@@ -43,7 +45,7 @@ export async function resolveUserMentions(text, resolveUserName) {
  * allowlists, but they must still mention the bot in a mention-mode channel.
  */
 export function shouldHandleGroupMessage(mode, isMention) {
-  return mode !== 'mention' || isMention;
+  return mode !== GROUP_MODE.MENTION || isMention;
 }
 
 /**

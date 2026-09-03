@@ -2,21 +2,23 @@
 
 import fs from 'fs';
 import path from 'path';
+import { CONNECTION_MODE, DM_POLICY, GROUP_MODE, GROUP_POLICY } from '../src/lib/constants.js';
 
 const HOME = process.env.HOME;
 const DATA_DIR = path.join(HOME, 'zylos/components/slack');
 
 const INITIAL_CONFIG = {
   enabled: true,
-  connection_mode: 'socket',
+  connection_mode: CONNECTION_MODE.SOCKET,
   webhook_port: 3461,
 
   owner: { bound: false, user_id: '', name: '' },
 
-  dmPolicy: 'owner',
+  dmPolicy: DM_POLICY.OWNER,
   dmAllowFrom: [],
 
-  groupPolicy: 'allowlist',
+  groupPolicy: GROUP_POLICY.ALLOWLIST,
+  groupMode: GROUP_MODE.MENTION,
   groups: {},
 
   message: {

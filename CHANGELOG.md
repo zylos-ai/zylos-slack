@@ -1,5 +1,17 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- Centralize Slack configuration and message-type values as immutable enum-like constants
+- Add an explicit `groupMode` default (`mention`) with CLI configuration and upgrade migration
+- Add regression coverage for configuration constants and group access policies
+
+### Fixed
+
+- Enforce `groupPolicy=disabled` for every channel sender, including the owner
+
 ## 0.1.2 (2026-09-02)
 
 - Fix mention-mode channels responding to unmentioned owner messages

@@ -17,6 +17,10 @@ import {
 import {
   getMessageDedupKey, isBotMentioned, resolveUserMentions, shouldHandleGroupMessage,
 } from './lib/mentions.js';
+import {
+  CONNECTION_MODE, DM_POLICY, ENDPOINT_TYPE, GROUP_MODE, SLACK_CHANNEL_TYPE,
+} from './lib/constants.js';
+import { isGroupAccessAllowed } from './lib/policy.js';
 
 // ── Constants ──
 
@@ -55,7 +59,7 @@ if (!botToken) {
   process.exit(1);
 }
 
-if (config.connection_mode === 'socket' && !appToken) {
+if (config.connection_mode === CONNECTION_MODE.SOCKET && !appToken) {
   console.error('[slack] SLACK_APP_TOKEN not set in .env (required for Socket Mode)');
   process.exit(1);
 }
@@ -75,9 +79,9 @@ async function main() {
   // Build Bolt app options
   const appOpts = {
     token: botToken,
-    appToken: config.connection_mode === 'socket' ? appToken : undefined,
-    socketMode: config.connection_mode === 'socket',
-    port: config.connection_mode === 'webhook' ? config.webhook_port : undefined,
+    appToken: config.connection_mode === CONNECTION_MODE.SOCKET ? appToken : undefined,
+    socketMode: config.connection_mode === CONNECTION_MODE.SOCKET,
+    port: config.connection_mode === CONNECTION_MODE.WEBHOOK ? config.webhook_port : undefined,
   };
 
   app = new App(appOpts);
@@ -95,7 +99,7 @@ async function main() {
 
     const channelType = event.channel_type; // 'im' for DM, 'channel'/'group' for channels
 
-    if (channelType === 'im') {
+    if (channelType === SLACK_CHANNEL_TYPE.DIRECT_MESSAGE) {
       await handleDM(event);
     } else {
       await handleGroupMessage(event, isBotMentioned(event.text, getBotUserId()));
@@ -156,11 +160,11 @@ async function handleDM(event) {
 
   // Access check
   if (!isOwner) {
-    if (config.dmPolicy === 'owner') {
+    if (config.dmPolicy === DM_POLICY.OWNER) {
       console.log(`[slack] DM rejected (owner-only): ${userName}`);
       return;
     }
-    if (config.dmPolicy === 'allowlist' && !config.dmAllowFrom.includes(userId)) {
+    if (config.dmPolicy === DM_POLICY.ALLOWLIST && !config.dmAllowFrom.includes(userId)) {
       console.log(`[slack] DM rejected (not in allowlist): ${userName}`);
       return;
     }
@@ -220,7 +224,7 @@ async function handleDM(event) {
   trackTyping(event.channel, event.ts);
 
   // Build endpoint
-  const endpoint = buildEndpoint(event.channel, 'dm', event.ts, event.thread_ts);
+  const endpoint = buildEndpoint(event.channel, ENDPOINT_TYPE.DIRECT_MESSAGE, event.ts, event.thread_ts);
 
   // Log
   logMessage(event.channel, { from: userName, userId, text: content, ts: event.ts });
@@ -241,33 +245,27 @@ async function handleDM(event) {
 async function handleGroupMessage(event, isMention = false) {
   const channelId = event.channel;
   const userId = event.user;
-  const userName = await getUserName(userId);
   const isOwner = userId === config.owner?.user_id;
-
-  // Check group policy
-  if (config.groupPolicy === 'disabled' && !isOwner) {
-    return;
-  }
-
   const groupConfig = config.groups?.[channelId];
 
-  if (config.groupPolicy === 'allowlist') {
-    if (!groupConfig && !isOwner) return;
-  }
+  // Check group policy
+  if (!isGroupAccessAllowed({
+    groupPolicy: config.groupPolicy,
+    groupConfig,
+    userId,
+    isOwner,
+  })) return;
 
-  // Per-group sender check
-  if (groupConfig?.allowFrom?.length > 0 && !isOwner) {
-    if (!groupConfig.allowFrom.includes(userId)) return;
-  }
+  const userName = await getUserName(userId);
 
-  const mode = groupConfig?.mode || 'mention';
+  const mode = groupConfig?.mode || config.groupMode || GROUP_MODE.MENTION;
   const groupName = groupConfig?.name || channelId;
 
   // Owner bypass applies to access control, not to the channel's trigger mode.
   if (!shouldHandleGroupMessage(mode, isMention)) return;
 
   // Smart mode: receive all but flag non-mentions
-  const isSmartNoMention = mode === 'smart' && !isMention;
+  const isSmartNoMention = mode === GROUP_MODE.SMART && !isMention;
 
   // Build message content
   let content = '';
@@ -316,7 +314,7 @@ async function handleGroupMessage(event, isMention = false) {
   }
 
   // Build endpoint
-  const endpoint = buildEndpoint(channelId, 'group', event.ts, event.thread_ts);
+  const endpoint = buildEndpoint(channelId, ENDPOINT_TYPE.GROUP, event.ts, event.thread_ts);
 
   // Log
   logMessage(channelId, { from: userName, userId, text: content, ts: event.ts });

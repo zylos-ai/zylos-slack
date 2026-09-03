@@ -2,6 +2,7 @@
 
 import fs from 'fs';
 import path from 'path';
+import { GROUP_MODE } from '../src/lib/constants.js';
 
 const HOME = process.env.HOME;
 const DATA_DIR = path.join(HOME, 'zylos/components/slack');
@@ -34,6 +35,13 @@ if (fs.existsSync(configPath)) {
       config.groups = {};
       migrated = true;
       migrations.push('Added groups config');
+    }
+
+    // Migration: ensure the global default group mode exists
+    if (config.groupMode === undefined) {
+      config.groupMode = GROUP_MODE.MENTION;
+      migrated = true;
+      migrations.push('Added default group mode');
     }
 
     // Migration: ensure typing dir exists
