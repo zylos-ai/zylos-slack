@@ -1,6 +1,6 @@
 ---
 name: slack
-version: 0.1.2
+version: 0.1.3
 description: >
   Slack communication channel. Receives messages via Slack Events API
   (Socket Mode or webhook) and sends messages via Slack Web API.
