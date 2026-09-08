@@ -8,12 +8,16 @@
 - Add an explicit `groupMode` default (`mention`) with CLI configuration and upgrade migration
 - Add regression coverage for configuration constants and group access policies
 
+### Changed
+
+- Keep Slack-to-C4 retry state in memory only; delivery is not resumed after a component restart
+
 ### Fixed
 
 - Enforce `groupPolicy=disabled` for every channel sender, including the owner
 - Track deduplication as `processing`/`done`, release failed keys, and let waiting equivalent events retry
-- Classify C4 structured failures so permanent input errors stop immediately while transient failures retry
-- Persist Slack-to-C4 deliveries before processing, recover pending records after restart, and dead-letter exhausted retries
+- Treat only an explicit C4 `{ "ok": true }` response as successful delivery
+- Classify C4 failures so permanent input errors stop immediately while transient and invalid responses receive a bounded in-process retry
 
 ### Security
 

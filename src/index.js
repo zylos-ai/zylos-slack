@@ -19,11 +19,9 @@ import {
 import {
   CONNECTION_MODE, DM_POLICY, ENDPOINT_TYPE, GROUP_MODE, SLACK_CHANNEL_TYPE,
 } from './lib/constants.js';
-import { createC4Deliverer } from './lib/c4-delivery.js';
+import { createC4Deliverer, createC4MessageSender } from './lib/c4-delivery.js';
 import { MessageDeduplicator } from './lib/dedup.js';
-import { createDeliveryOutbox } from './lib/delivery-outbox.js';
 import { isGroupAccessAllowed } from './lib/policy.js';
-import { createReliableDeliveryQueue } from './lib/reliable-delivery-queue.js';
 
 // ── Constants ──
 
@@ -32,7 +30,6 @@ const C4_RECEIVE = path.join(process.env.HOME,
 const LOGS_DIR = path.join(DATA_DIR, 'logs');
 const MEDIA_DIR = path.join(DATA_DIR, 'media');
 const TYPING_DIR = path.join(DATA_DIR, 'typing');
-const DELIVERY_JOURNAL = path.join(DATA_DIR, 'delivery.jsonl');
 
 const DEDUP_TTL = 5 * 60 * 1000; // 5 minutes
 const messageDeduplicator = new MessageDeduplicator({ ttlMs: DEDUP_TTL });
@@ -74,33 +71,18 @@ initClient(botToken);
 // Ensure directories exist
 [LOGS_DIR, MEDIA_DIR, TYPING_DIR].forEach(dir => fs.mkdirSync(dir, { recursive: true }));
 
-const c4DeliveryOutbox = createDeliveryOutbox({
-  journalPath: DELIVERY_JOURNAL,
-  onError: message => console.error(`[slack] Delivery journal: ${message}`),
-  onAmbiguousDelivery: (msgId, error) => {
-    console.error(`[slack] C4 accepted ${msgId}, but delivered state was not persisted: ${error.message}`);
-  },
-});
-
 const deliverToC4 = createC4Deliverer({ scriptPath: C4_RECEIVE });
-const c4DeliveryQueue = createReliableDeliveryQueue({
-  outbox: c4DeliveryOutbox,
+const sendToC4 = createC4MessageSender({
   deliver: deliverToC4,
   onDelivered: record => {
     console.log(`[slack] Sent to C4: ${record.content.substring(0, 60)}...`);
   },
-  onRetry: (record, error, attempts, delay) => {
-    console.warn(`[slack] C4 delivery ${record.msgId} failed (${error.code}), retry ${attempts} in ${delay}ms: ${error.message}`);
+  onRetry: (record, error, retryNumber, delay) => {
+    console.warn(`[slack] C4 delivery ${record.msgId} failed (${error.code}), retry ${retryNumber} in ${delay}ms: ${error.message}`);
   },
-  onDeadLetter: async (record, error, attempts) => {
-    console.error(`[slack] C4 delivery ${record.msgId} moved to dead letter after ${attempts} attempt(s) (${error.code}): ${error.message}`);
+  onFailed: async (record, error) => {
+    console.error(`[slack] C4 delivery ${record.msgId} failed after bounded retries (${error.code}): ${error.message}`);
     await clearFailedTypingIndicator(record);
-  },
-  onAmbiguousDelivery: (record, error) => {
-    console.error(`[slack] Delivery ${record.msgId} remains pending after an ambiguous C4 acknowledgement: ${error.message}`);
-  },
-  onPersistenceError: (record, error) => {
-    console.error(`[slack] Failed to persist delivery state for ${record.msgId}: ${error.message}`);
   },
 });
 
@@ -149,11 +131,6 @@ async function main() {
   // Start the app
   await app.start();
   console.log(`[slack] Running (${config.connection_mode} mode)`);
-
-  const recoveredDeliveries = c4DeliveryQueue.start();
-  if (recoveredDeliveries > 0) {
-    console.warn(`[slack] Recovering ${recoveredDeliveries} pending C4 delivery record(s)`);
-  }
 
   // Watch config for hot-reload
   watchConfig((newConfig) => {
@@ -263,7 +240,7 @@ async function handleDM(event) {
   const fullContent = `<current-message>\n${threadContext}${content}\n</current-message>${fileLine}`;
   const c4Message = `[Slack DM] ${userName} said: ${fullContent}`;
 
-  queueC4Delivery({
+  await sendToC4({
     msgId: getMessageDedupKey(event),
     source: 'slack',
     endpoint,
@@ -364,7 +341,7 @@ async function handleGroupMessage(event, isMention = false) {
   const fullContent = `<current-message>\n${groupContext}${content}\n</current-message>${fileLine}`;
   const c4Message = `[Slack GROUP:${groupName}] ${userName} said: ${fullContent}${smartHint}`;
 
-  queueC4Delivery({
+  await sendToC4({
     msgId: getMessageDedupKey(event),
     source: 'slack',
     endpoint,
@@ -375,16 +352,6 @@ async function handleGroupMessage(event, isMention = false) {
     messageType: ENDPOINT_TYPE.GROUP,
     senderName: userName,
   });
-}
-
-// ── C4 Integration ──
-
-function queueC4Delivery(record) {
-  const result = c4DeliveryQueue.enqueue(record);
-  if (result.status === 'pending' && !result.retry) {
-    console.log(`[slack] Persisted C4 delivery ${record.msgId}`);
-  }
-  return result;
 }
 
 async function clearFailedTypingIndicator(record) {
@@ -445,7 +412,6 @@ function logMessage(channelId, entry) {
 function shutdown() {
   console.log('[slack] Shutting down...');
   stopWatching();
-  c4DeliveryQueue.stop();
 
   // Remove all typing indicators
   for (const [, tracker] of typingTrackers) {

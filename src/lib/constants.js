@@ -60,17 +60,11 @@ export const DEDUP_STATE = Object.freeze({
 });
 export const DEDUP_STATE_VALUES = enumValues(DEDUP_STATE);
 
-export const DELIVERY_STATE = Object.freeze({
-  PENDING: 'pending',
-  DELIVERED: 'delivered',
-  DEAD_LETTER: 'dead_letter',
-});
-export const DELIVERY_STATE_VALUES = enumValues(DELIVERY_STATE);
-
 export const C4_ERROR_CODE = Object.freeze({
   INVALID_ARGS: 'INVALID_ARGS',
   INTERNAL_ERROR: 'INTERNAL_ERROR',
   UNHEALTHY_NOTIFY_FAILED: 'UNHEALTHY_NOTIFY_FAILED',
   TRANSPORT_ERROR: 'TRANSPORT_ERROR',
+  PROTOCOL_ERROR: 'PROTOCOL_ERROR',
 });
 export const C4_ERROR_CODE_VALUES = enumValues(C4_ERROR_CODE);
