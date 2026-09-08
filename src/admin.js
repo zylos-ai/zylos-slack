@@ -7,6 +7,17 @@
  */
 
 import { getConfig, saveConfig, loadConfig } from './lib/config.js';
+import {
+  CLI_TOGGLE,
+  CLI_TOGGLE_VALUES,
+  CONNECTION_MODE_VALUES,
+  DM_POLICY_VALUES,
+  GROUP_MODE,
+  GROUP_MODE_VALUES,
+  GROUP_POLICY_VALUES,
+} from './lib/constants.js';
+
+const choices = values => values.join('|');
 
 const args = process.argv.slice(2);
 const command = args[0];
@@ -21,20 +32,21 @@ Commands:
   show                              Show full config
   show-owner                        Show current owner
 
-  set-dm-policy <open|allowlist|owner>   Set DM access policy
+  set-dm-policy <${choices(DM_POLICY_VALUES)}>   Set DM access policy
   list-dm-allow                     List DM allowlist
   add-dm-allow <user_id>            Add user to DM allowlist
   remove-dm-allow <user_id>         Remove from DM allowlist
 
   list-groups                       List configured channels
-  add-group <channel_id> <name> [mode]   Add channel (mode: mention|smart)
+  add-group <channel_id> <name> [mode]   Add channel (mode: ${choices(GROUP_MODE_VALUES)})
   remove-group <channel_id>         Remove channel
-  set-group-policy <disabled|allowlist|open>  Set channel access policy
+  set-group-policy <${choices(GROUP_POLICY_VALUES)}>  Set channel access policy
+  set-group-mode <${choices(GROUP_MODE_VALUES)}>      Set default channel trigger mode
   set-group-allowfrom <channel_id> <id1,id2>  Per-channel sender whitelist
   set-group-history-limit <channel_id> <n>    Per-channel context limit
 
-  set-markdown <on|off>             Toggle markdown formatting
-  set-connection <socket|webhook>   Set connection mode (requires restart)
+  set-markdown <${choices(CLI_TOGGLE_VALUES)}>             Toggle markdown formatting
+  set-connection <${choices(CONNECTION_MODE_VALUES)}>   Set connection mode (requires restart)
 
   help                              Show this help
   `);
@@ -60,8 +72,8 @@ switch (command) {
 
   case 'set-dm-policy': {
     const policy = args[1];
-    if (!['open', 'allowlist', 'owner'].includes(policy)) {
-      console.error('Usage: set-dm-policy <open|allowlist|owner>');
+    if (!DM_POLICY_VALUES.includes(policy)) {
+      console.error(`Usage: set-dm-policy <${choices(DM_POLICY_VALUES)}>`);
       process.exit(1);
     }
     config.dmPolicy = policy;
@@ -110,6 +122,7 @@ switch (command) {
 
   case 'list-groups': {
     console.log(`Group Policy: ${config.groupPolicy}`);
+    console.log(`Default Group Mode: ${config.groupMode || GROUP_MODE.MENTION}`);
     const groups = config.groups || {};
     const keys = Object.keys(groups);
     if (keys.length === 0) {
@@ -118,7 +131,7 @@ switch (command) {
       console.log('Groups:');
       for (const id of keys) {
         const g = groups[id];
-        console.log(`  ${id}: ${g.name} (mode: ${g.mode || 'mention'}, allowFrom: ${g.allowFrom?.length || 0})`);
+        console.log(`  ${id}: ${g.name} (mode: ${g.mode || config.groupMode || GROUP_MODE.MENTION}, allowFrom: ${g.allowFrom?.length || 0})`);
       }
     }
     break;
@@ -127,13 +140,13 @@ switch (command) {
   case 'add-group': {
     const channelId = args[1];
     const name = args[2];
-    const mode = args[3] || 'mention';
+    const mode = args[3] || config.groupMode || GROUP_MODE.MENTION;
     if (!channelId || !name) {
-      console.error('Usage: add-group <channel_id> <name> [mention|smart]');
+      console.error(`Usage: add-group <channel_id> <name> [${choices(GROUP_MODE_VALUES)}]`);
       process.exit(1);
     }
-    if (!['mention', 'smart'].includes(mode)) {
-      console.error('Mode must be "mention" or "smart"');
+    if (!GROUP_MODE_VALUES.includes(mode)) {
+      console.error(`Mode must be one of: ${choices(GROUP_MODE_VALUES)}`);
       process.exit(1);
     }
     if (!config.groups) config.groups = {};
@@ -165,13 +178,25 @@ switch (command) {
 
   case 'set-group-policy': {
     const policy = args[1];
-    if (!['disabled', 'allowlist', 'open'].includes(policy)) {
-      console.error('Usage: set-group-policy <disabled|allowlist|open>');
+    if (!GROUP_POLICY_VALUES.includes(policy)) {
+      console.error(`Usage: set-group-policy <${choices(GROUP_POLICY_VALUES)}>`);
       process.exit(1);
     }
     config.groupPolicy = policy;
     saveConfig(config);
     console.log(`Group policy set to: ${policy}`);
+    break;
+  }
+
+  case 'set-group-mode': {
+    const mode = args[1];
+    if (!GROUP_MODE_VALUES.includes(mode)) {
+      console.error(`Usage: set-group-mode <${choices(GROUP_MODE_VALUES)}>`);
+      process.exit(1);
+    }
+    config.groupMode = mode;
+    saveConfig(config);
+    console.log(`Default group mode set to: ${mode}`);
     break;
   }
 
@@ -211,21 +236,21 @@ switch (command) {
 
   case 'set-markdown': {
     const val = args[1];
-    if (!['on', 'off'].includes(val)) {
-      console.error('Usage: set-markdown <on|off>');
+    if (!CLI_TOGGLE_VALUES.includes(val)) {
+      console.error(`Usage: set-markdown <${choices(CLI_TOGGLE_VALUES)}>`);
       process.exit(1);
     }
     if (!config.message) config.message = {};
-    config.message.useMarkdown = val === 'on';
+    config.message.useMarkdown = val === CLI_TOGGLE.ON;
     saveConfig(config);
-    console.log(`Markdown ${val === 'on' ? 'enabled' : 'disabled'}.`);
+    console.log(`Markdown ${val === CLI_TOGGLE.ON ? 'enabled' : 'disabled'}.`);
     break;
   }
 
   case 'set-connection': {
     const mode = args[1];
-    if (!['socket', 'webhook'].includes(mode)) {
-      console.error('Usage: set-connection <socket|webhook>');
+    if (!CONNECTION_MODE_VALUES.includes(mode)) {
+      console.error(`Usage: set-connection <${choices(CONNECTION_MODE_VALUES)}>`);
       process.exit(1);
     }
     config.connection_mode = mode;

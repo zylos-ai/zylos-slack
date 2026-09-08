@@ -1,6 +1,6 @@
 ---
 name: slack
-version: 0.1.2
+version: 0.1.3
 description: >
   Slack communication channel. Receives messages via Slack Events API
   (Socket Mode or webhook) and sends messages via Slack Web API.
@@ -75,6 +75,7 @@ SLACK_APP_TOKEN=xapp-...        # App-Level Token (Socket Mode)
   "dmPolicy": "owner",
   "dmAllowFrom": [],
   "groupPolicy": "allowlist",
+  "groupMode": "mention",
   "groups": {},
   "message": { "context_messages": 10, "useMarkdown": true }
 }
@@ -98,6 +99,7 @@ node ~/zylos/.claude/skills/slack/src/admin.js <command> [args]
 | `add-group <channel_id> <name> [mode]` | Add channel (mode: mention\|smart) |
 | `remove-group <channel_id>` | Remove channel |
 | `set-group-policy <disabled\|allowlist\|open>` | Set channel access policy |
+| `set-group-mode <mention\|smart>` | Set the default channel trigger mode |
 | `set-markdown <on\|off>` | Toggle markdown formatting |
 | `help` | Show all commands |
 

@@ -1,5 +1,28 @@
 # Changelog
 
+## 0.1.3 (2026-09-08)
+
+### Added
+
+- Centralize Slack configuration and message-type values as immutable enum-like constants
+- Add an explicit `groupMode` default (`mention`) with CLI configuration and upgrade migration
+- Add regression coverage for configuration constants and group access policies
+
+### Changed
+
+- Keep Slack-to-C4 retry state in memory only; delivery is not resumed after a component restart
+
+### Fixed
+
+- Enforce `groupPolicy=disabled` for every channel sender, including the owner
+- Track deduplication as `processing`/`done`, release failed keys, and let waiting equivalent events retry
+- Treat only an explicit C4 `{ "ok": true }` response as successful delivery
+- Classify C4 failures so permanent input errors stop immediately while transient and invalid responses receive a bounded in-process retry
+
+### Security
+
+- Refresh production dependency resolutions to remove all findings from `npm audit --omit=dev`
+
 ## 0.1.2 (2026-09-02)
 
 - Fix mention-mode channels responding to unmentioned owner messages

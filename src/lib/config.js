@@ -1,5 +1,6 @@
 import fs from 'fs';
 import path from 'path';
+import { CONNECTION_MODE, DM_POLICY, GROUP_MODE, GROUP_POLICY } from './constants.js';
 
 const HOME = process.env.HOME;
 export const DATA_DIR = path.join(HOME, 'zylos/components/slack');
@@ -7,7 +8,7 @@ export const CONFIG_PATH = path.join(DATA_DIR, 'config.json');
 
 export const DEFAULT_CONFIG = {
   enabled: true,
-  connection_mode: 'socket',       // 'socket' (Socket Mode) or 'webhook'
+  connection_mode: CONNECTION_MODE.SOCKET,
   webhook_port: 3461,
 
   owner: {
@@ -16,11 +17,12 @@ export const DEFAULT_CONFIG = {
     name: ''
   },
 
-  dmPolicy: 'owner',              // 'open' | 'allowlist' | 'owner'
-  dmAllowFrom: [],                // user IDs allowed to DM (when dmPolicy='allowlist')
+  dmPolicy: DM_POLICY.OWNER,
+  dmAllowFrom: [],
 
-  groupPolicy: 'allowlist',       // 'open' | 'allowlist' | 'disabled'
-  groups: {},                      // per-channel config: { C0123: { name, mode, allowFrom, historyLimit } }
+  groupPolicy: GROUP_POLICY.ALLOWLIST,
+  groupMode: GROUP_MODE.MENTION,
+  groups: {},
 
   message: {
     context_messages: 10,

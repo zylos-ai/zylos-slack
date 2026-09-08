@@ -3,7 +3,6 @@
 import dotenv from 'dotenv';
 import path from 'path';
 import fs from 'fs';
-import { exec } from 'child_process';
 import { App } from '@slack/bolt';
 
 dotenv.config({ path: path.join(process.env.HOME, 'zylos/.env') });
@@ -17,6 +16,12 @@ import {
 import {
   getMessageDedupKey, isBotMentioned, resolveUserMentions, shouldHandleGroupMessage,
 } from './lib/mentions.js';
+import {
+  CONNECTION_MODE, DM_POLICY, ENDPOINT_TYPE, GROUP_MODE, SLACK_CHANNEL_TYPE,
+} from './lib/constants.js';
+import { createC4Deliverer, createC4MessageSender } from './lib/c4-delivery.js';
+import { MessageDeduplicator } from './lib/dedup.js';
+import { isGroupAccessAllowed } from './lib/policy.js';
 
 // ── Constants ──
 
@@ -27,7 +32,7 @@ const MEDIA_DIR = path.join(DATA_DIR, 'media');
 const TYPING_DIR = path.join(DATA_DIR, 'typing');
 
 const DEDUP_TTL = 5 * 60 * 1000; // 5 minutes
-const dedupMap = new Map();
+const messageDeduplicator = new MessageDeduplicator({ ttlMs: DEDUP_TTL });
 
 // In-memory chat histories for context
 const chatHistories = new Map();
@@ -55,7 +60,7 @@ if (!botToken) {
   process.exit(1);
 }
 
-if (config.connection_mode === 'socket' && !appToken) {
+if (config.connection_mode === CONNECTION_MODE.SOCKET && !appToken) {
   console.error('[slack] SLACK_APP_TOKEN not set in .env (required for Socket Mode)');
   process.exit(1);
 }
@@ -66,6 +71,21 @@ initClient(botToken);
 // Ensure directories exist
 [LOGS_DIR, MEDIA_DIR, TYPING_DIR].forEach(dir => fs.mkdirSync(dir, { recursive: true }));
 
+const deliverToC4 = createC4Deliverer({ scriptPath: C4_RECEIVE });
+const sendToC4 = createC4MessageSender({
+  deliver: deliverToC4,
+  onDelivered: record => {
+    console.log(`[slack] Sent to C4: ${record.content.substring(0, 60)}...`);
+  },
+  onRetry: (record, error, retryNumber, delay) => {
+    console.warn(`[slack] C4 delivery ${record.msgId} failed (${error.code}), retry ${retryNumber} in ${delay}ms: ${error.message}`);
+  },
+  onFailed: async (record, error) => {
+    console.error(`[slack] C4 delivery ${record.msgId} failed after bounded retries (${error.code}): ${error.message}`);
+    await clearFailedTypingIndicator(record);
+  },
+});
+
 // ── Main ──
 
 async function main() {
@@ -75,9 +95,9 @@ async function main() {
   // Build Bolt app options
   const appOpts = {
     token: botToken,
-    appToken: config.connection_mode === 'socket' ? appToken : undefined,
-    socketMode: config.connection_mode === 'socket',
-    port: config.connection_mode === 'webhook' ? config.webhook_port : undefined,
+    appToken: config.connection_mode === CONNECTION_MODE.SOCKET ? appToken : undefined,
+    socketMode: config.connection_mode === CONNECTION_MODE.SOCKET,
+    port: config.connection_mode === CONNECTION_MODE.WEBHOOK ? config.webhook_port : undefined,
   };
 
   app = new App(appOpts);
@@ -88,18 +108,16 @@ async function main() {
     if (event.bot_id || event.subtype) return;
     if (event.user === getBotUserId()) return;
 
-    // Dedup
     const msgKey = getMessageDedupKey(event);
-    if (dedupMap.has(msgKey)) return;
-    dedupMap.set(msgKey, Date.now());
+    await messageDeduplicator.run(msgKey, async () => {
+      const channelType = event.channel_type; // 'im' for DM, 'channel'/'group' for channels
 
-    const channelType = event.channel_type; // 'im' for DM, 'channel'/'group' for channels
-
-    if (channelType === 'im') {
-      await handleDM(event);
-    } else {
-      await handleGroupMessage(event, isBotMentioned(event.text, getBotUserId()));
-    }
+      if (channelType === SLACK_CHANNEL_TYPE.DIRECT_MESSAGE) {
+        await handleDM(event);
+      } else {
+        await handleGroupMessage(event, isBotMentioned(event.text, getBotUserId()));
+      }
+    });
   });
 
   // ── Event: App Mention (in channels) ──
@@ -107,10 +125,7 @@ async function main() {
     if (event.bot_id || event.user === getBotUserId()) return;
 
     const msgKey = getMessageDedupKey(event);
-    if (dedupMap.has(msgKey)) return;
-    dedupMap.set(msgKey, Date.now());
-
-    await handleGroupMessage(event, true);
+    await messageDeduplicator.run(msgKey, () => handleGroupMessage(event, true));
   });
 
   // Start the app
@@ -127,13 +142,9 @@ async function main() {
     }
   });
 
-  // Cleanup dedup map periodically
-  setInterval(() => {
-    const now = Date.now();
-    for (const [key, ts] of dedupMap) {
-      if (now - ts > DEDUP_TTL) dedupMap.delete(key);
-    }
-  }, 60_000);
+  // Cleanup completed dedup entries periodically. Processing entries remain
+  // owned by their active handler and are released immediately on failure.
+  setInterval(() => messageDeduplicator.cleanup(), 60_000);
 
   // Typing indicator check (every 2s)
   setInterval(checkTypingDone, 2000);
@@ -156,11 +167,11 @@ async function handleDM(event) {
 
   // Access check
   if (!isOwner) {
-    if (config.dmPolicy === 'owner') {
+    if (config.dmPolicy === DM_POLICY.OWNER) {
       console.log(`[slack] DM rejected (owner-only): ${userName}`);
       return;
     }
-    if (config.dmPolicy === 'allowlist' && !config.dmAllowFrom.includes(userId)) {
+    if (config.dmPolicy === DM_POLICY.ALLOWLIST && !config.dmAllowFrom.includes(userId)) {
       console.log(`[slack] DM rejected (not in allowlist): ${userName}`);
       return;
     }
@@ -220,7 +231,7 @@ async function handleDM(event) {
   trackTyping(event.channel, event.ts);
 
   // Build endpoint
-  const endpoint = buildEndpoint(event.channel, 'dm', event.ts, event.thread_ts);
+  const endpoint = buildEndpoint(event.channel, ENDPOINT_TYPE.DIRECT_MESSAGE, event.ts, event.thread_ts);
 
   // Log
   logMessage(event.channel, { from: userName, userId, text: content, ts: event.ts });
@@ -229,10 +240,16 @@ async function handleDM(event) {
   const fullContent = `<current-message>\n${threadContext}${content}\n</current-message>${fileLine}`;
   const c4Message = `[Slack DM] ${userName} said: ${fullContent}`;
 
-  // Send to C4
-  sendToC4('slack', endpoint, c4Message, (rejectMsg) => {
-    removeReaction(event.channel, event.ts, 'hourglass_flowing_sand');
-    console.warn(`[slack] C4 rejected DM from ${userName}: ${rejectMsg}`);
+  await sendToC4({
+    msgId: getMessageDedupKey(event),
+    source: 'slack',
+    endpoint,
+    content: c4Message,
+    channel: event.channel,
+    ts: event.ts,
+    hasTypingIndicator: true,
+    messageType: ENDPOINT_TYPE.DIRECT_MESSAGE,
+    senderName: userName,
   });
 }
 
@@ -241,33 +258,27 @@ async function handleDM(event) {
 async function handleGroupMessage(event, isMention = false) {
   const channelId = event.channel;
   const userId = event.user;
-  const userName = await getUserName(userId);
   const isOwner = userId === config.owner?.user_id;
-
-  // Check group policy
-  if (config.groupPolicy === 'disabled' && !isOwner) {
-    return;
-  }
-
   const groupConfig = config.groups?.[channelId];
 
-  if (config.groupPolicy === 'allowlist') {
-    if (!groupConfig && !isOwner) return;
-  }
+  // Check group policy
+  if (!isGroupAccessAllowed({
+    groupPolicy: config.groupPolicy,
+    groupConfig,
+    userId,
+    isOwner,
+  })) return;
 
-  // Per-group sender check
-  if (groupConfig?.allowFrom?.length > 0 && !isOwner) {
-    if (!groupConfig.allowFrom.includes(userId)) return;
-  }
+  const userName = await getUserName(userId);
 
-  const mode = groupConfig?.mode || 'mention';
+  const mode = groupConfig?.mode || config.groupMode || GROUP_MODE.MENTION;
   const groupName = groupConfig?.name || channelId;
 
   // Owner bypass applies to access control, not to the channel's trigger mode.
   if (!shouldHandleGroupMessage(mode, isMention)) return;
 
   // Smart mode: receive all but flag non-mentions
-  const isSmartNoMention = mode === 'smart' && !isMention;
+  const isSmartNoMention = mode === GROUP_MODE.SMART && !isMention;
 
   // Build message content
   let content = '';
@@ -316,7 +327,7 @@ async function handleGroupMessage(event, isMention = false) {
   }
 
   // Build endpoint
-  const endpoint = buildEndpoint(channelId, 'group', event.ts, event.thread_ts);
+  const endpoint = buildEndpoint(channelId, ENDPOINT_TYPE.GROUP, event.ts, event.thread_ts);
 
   // Log
   logMessage(channelId, { from: userName, userId, text: content, ts: event.ts });
@@ -330,52 +341,27 @@ async function handleGroupMessage(event, isMention = false) {
   const fullContent = `<current-message>\n${groupContext}${content}\n</current-message>${fileLine}`;
   const c4Message = `[Slack GROUP:${groupName}] ${userName} said: ${fullContent}${smartHint}`;
 
-  sendToC4('slack', endpoint, c4Message, (rejectMsg) => {
-    if (isMention || !isSmartNoMention) {
-      removeReaction(event.channel, event.ts, 'hourglass_flowing_sand');
-    }
-    console.warn(`[slack] C4 rejected group msg from ${userName}: ${rejectMsg}`);
+  await sendToC4({
+    msgId: getMessageDedupKey(event),
+    source: 'slack',
+    endpoint,
+    content: c4Message,
+    channel: event.channel,
+    ts: event.ts,
+    hasTypingIndicator: isMention || !isSmartNoMention,
+    messageType: ENDPOINT_TYPE.GROUP,
+    senderName: userName,
   });
 }
 
-// ── C4 Integration ──
-
-function sendToC4(source, endpoint, content, onReject) {
-  const safeContent = content.replace(/'/g, "'\\''");
-  const cmd = `node "${C4_RECEIVE}" --channel "${source}" --endpoint "${endpoint}" --json --content '${safeContent}'`;
-
-  const timeout = 35_000;
-
-  exec(cmd, { encoding: 'utf8', timeout }, (error, stdout) => {
-    if (!error) {
-      console.log(`[slack] Sent to C4: ${content.substring(0, 60)}...`);
-      return;
-    }
-
-    // Handle rejection
-    try {
-      const response = JSON.parse(error.stdout || stdout);
-      if (response?.ok === false) {
-        console.warn(`[slack] C4 rejected: ${response.error?.message}`);
-        if (onReject) onReject(response.error?.message);
-        return;
-      }
-    } catch {}
-
-    // Retry once after 2s
-    console.warn(`[slack] C4 send failed, retrying: ${error.message}`);
-    setTimeout(() => {
-      exec(cmd, { encoding: 'utf8', timeout }, (retryError) => {
-        if (!retryError) return;
-        try {
-          const response = JSON.parse(retryError.stdout);
-          if (response?.ok === false && onReject) {
-            onReject(response.error?.message);
-          }
-        } catch {}
-      });
-    }, 2000);
-  });
+async function clearFailedTypingIndicator(record) {
+  if (!record.hasTypingIndicator || !record.channel || !record.ts) return;
+  typingTrackers.delete(`${record.channel}-${record.ts}`);
+  try {
+    await removeReaction(record.channel, record.ts, 'hourglass_flowing_sand');
+  } catch (error) {
+    console.warn(`[slack] Failed to clear typing indicator for ${record.msgId}: ${error.message}`);
+  }
 }
 
 // ── Typing Indicator ──

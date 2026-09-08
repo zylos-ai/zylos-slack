@@ -7,6 +7,7 @@ import {
   resolveUserMentions,
   shouldHandleGroupMessage,
 } from '../src/lib/mentions.js';
+import { GROUP_MODE } from '../src/lib/constants.js';
 
 test('detects only an explicit mention of the current bot', () => {
   assert.equal(isBotMentioned('<@UBOT123> please help', 'UBOT123'), true);
@@ -43,9 +44,9 @@ test('falls back to a Slack user ID when name resolution fails', async () => {
 });
 
 test('mention mode requires a mention for every sender', () => {
-  assert.equal(shouldHandleGroupMessage('mention', true), true);
-  assert.equal(shouldHandleGroupMessage('mention', false), false);
-  assert.equal(shouldHandleGroupMessage('smart', false), true);
+  assert.equal(shouldHandleGroupMessage(GROUP_MODE.MENTION, true), true);
+  assert.equal(shouldHandleGroupMessage(GROUP_MODE.MENTION, false), false);
+  assert.equal(shouldHandleGroupMessage(GROUP_MODE.SMART, false), true);
 });
 
 test('message and app_mention deliveries use the same deduplication key', () => {
