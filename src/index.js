@@ -104,8 +104,10 @@ async function main() {
 
   // ── Event: Direct Message ──
   app.event('message', async ({ event, say }) => {
-    // Ignore bot's own messages, subtypes (edits, joins, etc.)
-    if (event.bot_id || event.subtype) return;
+    // Ignore bot's own messages and noisy subtypes (edits, joins, etc.).
+    // IMPORTANT: file uploads arrive with subtype === 'file_share' — must let them through.
+    if (event.bot_id) return;
+    if (event.subtype && event.subtype !== 'file_share') return;
     if (event.user === getBotUserId()) return;
 
     const msgKey = getMessageDedupKey(event);
@@ -237,7 +239,10 @@ async function handleDM(event) {
   logMessage(event.channel, { from: userName, userId, text: content, ts: event.ts });
 
   // Format for C4
-  const fullContent = `<current-message>\n${threadContext}${content}\n</current-message>${fileLine}`;
+  const attachmentBlock = fileLine
+    ? `\n\n<attachments>\nUser attached file(s). Use the Read tool on each absolute path below to view the contents:${fileLine}\n</attachments>`
+    : '';
+  const fullContent = `<current-message>\n${threadContext}${content}\n</current-message>${attachmentBlock}`;
   const c4Message = `[Slack DM] ${userName} said: ${fullContent}`;
 
   await sendToC4({
@@ -338,7 +343,10 @@ async function handleGroupMessage(event, isMention = false) {
     smartHint = '\n(Smart mode: no @mention. Reply with [SKIP] if not relevant.)';
   }
 
-  const fullContent = `<current-message>\n${groupContext}${content}\n</current-message>${fileLine}`;
+  const attachmentBlock = fileLine
+    ? `\n\n<attachments>\nUser attached file(s). Use the Read tool on each absolute path below to view the contents:${fileLine}\n</attachments>`
+    : '';
+  const fullContent = `<current-message>\n${groupContext}${content}\n</current-message>${attachmentBlock}`;
   const c4Message = `[Slack GROUP:${groupName}] ${userName} said: ${fullContent}${smartHint}`;
 
   await sendToC4({
