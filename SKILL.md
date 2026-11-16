@@ -175,8 +175,12 @@ Core adds the `slack:` namespace (e.g. `slack:dm-D0123ABCDE`).
   endpoint is sent exactly as before.
 - The group is passed only if the installed Core lists `--session-group` in
   `c4-receive-options.json` (re-read on every message, so no restart is needed
-  after a Core upgrade). Older Cores receive exactly the same arguments as
-  before, including the message content (no channel thread fetch).
+  after a Core upgrade). Older Cores receive the same arguments as before,
+  including the message content (no channel thread fetch), with two
+  exceptions: a DM thread message is sent without its `<thread-context>` block
+  when the Slack fetch fails, is rate-limited or takes over 5s; and
+  c4-receive is run with the current Node binary (`process.execPath`) instead
+  of `node` from `PATH`.
 - If Core rejects a message, Core's raw text goes only to the component log.
   For a DM, or a channel / private channel / group DM message that @-mentions
   the bot, the user gets, in the message's thread, "Sorry, I couldn't take

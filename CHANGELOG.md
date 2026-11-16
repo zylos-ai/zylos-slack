@@ -15,8 +15,11 @@
   option is passed only when the installed Core lists it in
   `c4-receive-options.json` (re-read on every message); on older Cores no session
   group is derived at all and channel thread messages get no Slack thread
-  fetch, so they receive exactly the same arguments, including `--content`, as
-  before (`src/lib/session-group.js`, `src/lib/c4-delivery.js`, `src/lib/endpoint.js`).
+  fetch, so they receive the same arguments, including `--content`, as before
+  (`src/lib/session-group.js`, `src/lib/c4-delivery.js`, `src/lib/endpoint.js`).
+  Exceptions, listed under "Changed": a DM thread message is sent without its
+  `<thread-context>` block when the Slack fetch fails or takes over 5s, and
+  c4-receive runs with `process.execPath`.
 - `scripts/session-group.js <endpoint>` prints the session group for an
   endpoint (exit 0), or exits 1 with empty stdout for bad input or a failed
   lookup. Core uses it to check which thread owns an outbound address. A bare

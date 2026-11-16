@@ -250,7 +250,7 @@ describe('rejection classification and notices', () => {
   });
 });
 
-describe('reject notices only for messages addressed to the bot (owner decision)', () => {
+describe('reject notices only for messages addressed to the bot', () => {
   async function reject(record, notice) {
     const cleared = [];
     const posted = [];
@@ -521,28 +521,36 @@ describe('no duplicate delivery (message + app_mention for one Slack message)', 
   // waiting app_mention event delivered the same message again.
   const event = { channel: CHANNEL, ts: '1763280001.000200', text: 'hi <@UBOT>' };
 
-  for (const [label, response] of [
-    ['timeout', { hangMs: 5000, exit: 0 }],
-    ['uncertain rejection', reject('INTERNAL_ERROR', 'absent')],
-    ['not stored', reject('INTERNAL_ERROR', [])],
+  // Only the timeout case uses a short timeout. Under heavy CPU load the child
+  // can be killed before it records its call, so that case counts sender runs
+  // instead of recorded calls; the others exit at once and get a roomy timeout.
+  for (const [label, response, timeoutMs] of [
+    ['timeout', { hangMs: 5000, exit: 0 }, 300],
+    ['uncertain rejection', reject('INTERNAL_ERROR', 'absent'), 10_000],
+    ['not stored', reject('INTERNAL_ERROR', []), 10_000],
   ]) {
     test(`${label}: c4-receive runs once for both events`, async () => {
       writeOptions(SG);
       script(response, OK);
       const notices = [];
       const sender = createC4MessageSender({
-        timeoutMs: 300,
+        timeoutMs,
         onRejected: (record, notice) => notices.push(notice),
         logger: silentLogger(),
       });
       const dedup = new MessageDeduplicator({ ttlMs: 60_000 });
       const key = getMessageDedupKey(event);
-      const handle = () => sender({ msgId: key, source: 'slack', endpoint: THREAD_EP, content: 'hi' });
+      let runs = 0;
+      const handle = () => {
+        runs += 1;
+        return sender({ msgId: key, source: 'slack', endpoint: THREAD_EP, content: 'hi' });
+      };
       const results = await Promise.all([dedup.run(key, handle), dedup.run(key, handle)]);
       assert.deepEqual(results.map(r => r.processed).sort(), [false, true]);
       // a later redelivery of the same event is suppressed too
       assert.equal((await dedup.run(key, handle)).processed, false);
-      assert.equal(recorded().length, 1);
+      assert.equal(runs, 1);
+      if (label !== 'timeout') assert.equal(recorded().length, 1);
       assert.equal(notices.length, 1);
     });
   }
