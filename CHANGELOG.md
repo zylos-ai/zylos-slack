@@ -49,16 +49,19 @@
 These also apply on older Cores:
 
 - A `c4-receive` call that exceeds the 35s timeout is killed and treated as an
-  unknown outcome: the user is told the message may not have arrived and it is
-  not resent. Previously timeouts, crashes and most rejections were retried
+  unknown outcome: the user is told the message may not have arrived (DMs and
+  @-mentions only) and it is not resent. Previously timeouts, crashes and most rejections were retried
   once, which could deliver a message Core had already stored twice.
 - Only a `c4-receive` that could not be started is retried (once, after 2s).
   Rejections are classified by `error.persisted`: stored (nothing sent to the
   user, hourglass cleared), not stored ("Sorry, I couldn't take this message
   right now. Please try again later."), or uncertain ("Sorry, this message may
   not have reached me. If you don't get a reply in a few minutes, please send it
-  again."). The notice is posted in the message's thread; Core's raw error text
-  only goes to the log.
+  again."). The notice is posted in the message's thread, and only for
+  messages addressed to the bot: every DM, and channel, private channel or group
+  DM (mpim) messages that @-mention the bot. A smart-mode message without an
+  @mention gets no notice; its outcome is still final and logged. Core's raw
+  error text only goes to the log.
 - Every delivery outcome is final for the event deduplicator, so an equivalent
   Slack event (`message` + `app_mention` for one message) can no longer deliver
   the same message again after a failed attempt.

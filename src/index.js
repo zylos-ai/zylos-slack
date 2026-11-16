@@ -19,7 +19,9 @@ import {
 import {
   CONNECTION_MODE, DM_POLICY, ENDPOINT_TYPE, GROUP_MODE, SLACK_CHANNEL_TYPE,
 } from './lib/constants.js';
-import { c4ReceiveSupportsOption, createC4MessageSender } from './lib/c4-delivery.js';
+import {
+  c4ReceiveSupportsOption, createC4MessageSender, createRejectHandler,
+} from './lib/c4-delivery.js';
 import { buildEndpoint } from './lib/endpoint.js';
 import { recordChatType, recordUserDm } from './lib/session-group.js';
 import {
@@ -86,12 +88,13 @@ const sendToC4 = createC4MessageSender({
   onDelivered: record => {
     console.log(`[slack] Sent to C4: ${record.content.substring(0, 60)}...`);
   },
-  // Every outcome is final (never resent). notice is null when Core already
-  // stored the message: clear the hourglass and send nothing.
-  onRejected: async (record, notice) => {
-    await clearFailedTypingIndicator(record);
-    if (notice) await sendRejectNotice(record, notice);
-  },
+  // Every outcome is final (never resent). The hourglass is always cleared;
+  // the notice (null when Core already stored the message) is posted only for
+  // DMs and channel messages that @-mention the bot.
+  onRejected: createRejectHandler({
+    clearTypingIndicator: clearFailedTypingIndicator,
+    postNotice: sendRejectNotice,
+  }),
 });
 
 // ── Main ──
@@ -375,6 +378,7 @@ async function handleGroupMessage(event, isMention = false) {
     ts: event.ts,
     threadTs: event.thread_ts,
     hasTypingIndicator: isMention || !isSmartNoMention,
+    isMention,
     messageType: ENDPOINT_TYPE.GROUP,
     senderName: userName,
   });
@@ -383,8 +387,8 @@ async function handleGroupMessage(event, isMention = false) {
 /**
  * Tell the user the agent will not answer this message (TRY_LATER /
  * MAYBE_LOST). Posted where a reply would go: the message's thread, as
- * scripts/send.js does. Smart-mode messages without an @mention are handled
- * the same way.
+ * scripts/send.js does. Only called for DMs and @-mentions
+ * (shouldPostRejectNotice).
  */
 async function sendRejectNotice(record, notice) {
   if (!record.channel) return;

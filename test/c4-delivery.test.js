@@ -11,10 +11,12 @@ import {
   c4ReceiveSupportsOption,
   classifyC4Rejection,
   createC4MessageSender,
+  createRejectHandler,
   getC4ReceivePath,
   MAYBE_LOST,
   noticeForOutcome,
   parseC4Response,
+  shouldPostRejectNotice,
   TRY_LATER,
 } from '../src/lib/c4-delivery.js';
 import { C4_OUTCOME } from '../src/lib/constants.js';
@@ -245,6 +247,53 @@ describe('rejection classification and notices', () => {
     assert.equal(noticeForOutcome(C4_OUTCOME.UNCERTAIN), MAYBE_LOST);
     assert.equal(noticeForOutcome(C4_OUTCOME.UNKNOWN), MAYBE_LOST);
     assert.equal(noticeForOutcome(C4_OUTCOME.FAILED), MAYBE_LOST);
+  });
+});
+
+describe('reject notices only for messages addressed to the bot (owner decision)', () => {
+  async function reject(record, notice) {
+    const cleared = [];
+    const posted = [];
+    const handler = createRejectHandler({
+      clearTypingIndicator: async rec => { cleared.push(rec.msgId); },
+      postNotice: async (rec, n) => { posted.push([rec.msgId, n]); },
+    });
+    await handler(record, notice);
+    return { cleared, posted };
+  }
+  const channelMention = { msgId: 'C1-1', messageType: 'group', isMention: true, hasTypingIndicator: true };
+  const smartNoMention = { msgId: 'C1-2', messageType: 'group', isMention: false, hasTypingIndicator: false };
+  const dm = { msgId: 'D1-1', messageType: 'dm', hasTypingIndicator: true };
+
+  test('@-mention channel message: hourglass cleared and notice posted', async () => {
+    for (const notice of [TRY_LATER, MAYBE_LOST]) {
+      assert.deepEqual(await reject(channelMention, notice), { cleared: ['C1-1'], posted: [['C1-1', notice]] });
+    }
+  });
+
+  test('smart-mode channel message without @mention: hourglass cleared, no notice', async () => {
+    for (const notice of [TRY_LATER, MAYBE_LOST]) {
+      assert.deepEqual(await reject(smartNoMention, notice), { cleared: ['C1-2'], posted: [] });
+    }
+    assert.deepEqual(await reject({ ...smartNoMention, isMention: undefined }, TRY_LATER), { cleared: ['C1-2'], posted: [] });
+  });
+
+  test('DM: hourglass cleared and notice posted', async () => {
+    assert.deepEqual(await reject(dm, MAYBE_LOST), { cleared: ['D1-1'], posted: [['D1-1', MAYBE_LOST]] });
+  });
+
+  test('stored (notice null): only the hourglass is cleared', async () => {
+    for (const record of [channelMention, smartNoMention, dm]) {
+      assert.deepEqual((await reject(record, null)).posted, []);
+    }
+  });
+
+  test('shouldPostRejectNotice', () => {
+    assert.equal(shouldPostRejectNotice(dm), true);
+    assert.equal(shouldPostRejectNotice(channelMention), true);
+    assert.equal(shouldPostRejectNotice(smartNoMention), false);
+    assert.equal(shouldPostRejectNotice({ messageType: 'group' }), false);
+    assert.equal(shouldPostRejectNotice(undefined), false);
   });
 });
 
@@ -503,7 +552,7 @@ describe('index.js wiring (source checks)', () => {
   const src = fs.readFileSync(new URL('../src/index.js', import.meta.url), 'utf8');
 
   test('every inbound call goes through createC4MessageSender; index.js never spawns c4-receive', () => {
-    assert.match(src, /import \{ c4ReceiveSupportsOption, createC4MessageSender \} from '\.\/lib\/c4-delivery\.js';/);
+    assert.match(src, /import \{\n  c4ReceiveSupportsOption, createC4MessageSender, createRejectHandler,\n\} from '\.\/lib\/c4-delivery\.js';/);
     assert.equal(src.match(/createC4MessageSender\(/g).length, 1);
     assert.ok(!/\bexecFile\b/.test(src));
     assert.ok(!src.includes('c4-receive.js'), 'path comes from getC4ReceivePath() ($ZYLOS_DIR aware)');
@@ -511,10 +560,12 @@ describe('index.js wiring (source checks)', () => {
   });
 
   test('reject handler clears the hourglass and posts the notice into the thread', () => {
-    const handler = src.slice(src.indexOf('onRejected: async (record, notice) => {'));
-    const body = handler.slice(0, handler.indexOf('\n  },'));
-    assert.match(body, /await clearFailedTypingIndicator\(record\);/);
-    assert.match(body, /if \(notice\) await sendRejectNotice\(record, notice\);/);
+    assert.match(src, /onRejected: createRejectHandler\(\{\n\s+clearTypingIndicator: clearFailedTypingIndicator,\n\s+postNotice: sendRejectNotice,\n\s+\}\),/);
+    // The group handler passes isMention (app_mention, or isBotMentioned on the text).
+    const group = src.slice(src.indexOf('async function handleGroupMessage('));
+    assert.match(group, /hasTypingIndicator: isMention \|\| !isSmartNoMention,\n    isMention,\n    messageType: ENDPOINT_TYPE\.GROUP,/);
+    assert.match(src, /handleGroupMessage\(event, isBotMentioned\(event\.text, getBotUserId\(\)\)\)/);
+    assert.match(src, /handleGroupMessage\(event, true\)/);
     const notice = src.slice(src.indexOf('async function sendRejectNotice('));
     assert.match(notice.slice(0, notice.indexOf('\n}\n')),
       /sendText\(record\.channel, notice, \{ thread_ts: record\.threadTs \|\| record\.ts \}\)/);

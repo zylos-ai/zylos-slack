@@ -22,7 +22,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { execFile } from 'node:child_process';
 
-import { C4_OUTCOME } from './constants.js';
+import { C4_OUTCOME, ENDPOINT_TYPE } from './constants.js';
 import { sessionGroupFromEndpoint } from './session-group.js';
 
 export const TRY_LATER = "Sorry, I couldn't take this message right now. Please try again later.";
@@ -125,6 +125,35 @@ export function noticeForOutcome(outcome) {
     default:
       return null;
   }
+}
+
+/**
+ * Whether the user is told that the agent will not answer (TRY_LATER /
+ * MAYBE_LOST). Only messages addressed to the bot get a notice: every DM, and a
+ * channel, private channel or group DM (mpim) message only when it @-mentions
+ * the bot (`record.isMention`: an app_mention event, or isBotMentioned on the
+ * message text). A smart-mode message without an @mention gets none.
+ * @param {{messageType?: string, isMention?: boolean}} record
+ * @returns {boolean}
+ */
+export function shouldPostRejectNotice(record) {
+  return record?.messageType === ENDPOINT_TYPE.DIRECT_MESSAGE || record?.isMention === true;
+}
+
+/**
+ * The onRejected handler for createC4MessageSender: always clears the
+ * hourglass, then posts the notice if there is one and the message was
+ * addressed to the bot (shouldPostRejectNotice).
+ * @param {object} opts
+ * @param {function} opts.clearTypingIndicator - async (record) => void
+ * @param {function} opts.postNotice - async (record, notice) => void
+ * @returns {function} async (record, notice) => void
+ */
+export function createRejectHandler({ clearTypingIndicator, postNotice }) {
+  return async (record, notice) => {
+    await clearTypingIndicator(record);
+    if (notice && shouldPostRejectNotice(record)) await postNotice(record, notice);
+  };
 }
 
 /**

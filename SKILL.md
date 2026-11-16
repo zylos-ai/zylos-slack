@@ -177,9 +177,10 @@ Core adds the `slack:` namespace (e.g. `slack:dm-D0123ABCDE`).
   `c4-receive-options.json` (re-read on every message, so no restart is needed
   after a Core upgrade). Older Cores receive exactly the same arguments as
   before, including the message content (no channel thread fetch).
-- If Core rejects a message, Core's raw text goes only to the component log. In
-  the message's thread the user gets "Sorry, I couldn't take this message right
-  now. Please try again later." when Core says nothing was stored, and "Sorry,
+- If Core rejects a message, Core's raw text goes only to the component log.
+  For a DM, or a channel / private channel / group DM message that @-mentions
+  the bot, the user gets, in the message's thread, "Sorry, I couldn't take
+  this message right now. Please try again later." when Core says nothing was stored, and "Sorry,
   this message may not have reached me. If you don't get a reply in a few
   minutes, please send it again." when Core cannot say or the outcome is
   unknown. If Core reports the message as already stored, nothing is sent and
@@ -187,7 +188,9 @@ Core adds the `slack:` namespace (e.g. `slack:dm-D0123ABCDE`).
   group. c4-receive is killed after 35s; a timeout counts as an unknown outcome
   (the "may not have reached me" notice, never resent). It is retried (once,
   after 2s) only when the process could not be started at all. Smart-mode
-  messages without an @mention are handled the same way.
+  messages without an @mention get no notice (they had no hourglass either);
+  the outcome is still final (never resent) and logged. This holds for every
+  case above, including an endpoint that cannot be mapped to a session group.
 
 Look up the session group for an endpoint:
 
