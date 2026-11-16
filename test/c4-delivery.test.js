@@ -503,7 +503,7 @@ describe('index.js wiring (source checks)', () => {
   const src = fs.readFileSync(new URL('../src/index.js', import.meta.url), 'utf8');
 
   test('every inbound call goes through createC4MessageSender; index.js never spawns c4-receive', () => {
-    assert.match(src, /import \{ createC4MessageSender \} from '\.\/lib\/c4-delivery\.js';/);
+    assert.match(src, /import \{ c4ReceiveSupportsOption, createC4MessageSender \} from '\.\/lib\/c4-delivery\.js';/);
     assert.equal(src.match(/createC4MessageSender\(/g).length, 1);
     assert.ok(!/\bexecFile\b/.test(src));
     assert.ok(!src.includes('c4-receive.js'), 'path comes from getC4ReceivePath() ($ZYLOS_DIR aware)');

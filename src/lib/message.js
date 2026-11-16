@@ -193,9 +193,9 @@ export async function fetchHistory(channel, limit = 10, latest) {
 
 /**
  * Fetch thread replies.
+ * @param {object} [client] - WebClient to use (default: the main client)
  */
-export async function fetchThread(channel, threadTs, limit = 10) {
-  const client = getClient();
+export async function fetchThread(channel, threadTs, limit = 10, client = getClient()) {
   const res = await client.conversations.replies({
     channel,
     ts: threadTs,

@@ -36,6 +36,7 @@ import path from 'path';
 import { DATA_DIR } from './config.js';
 import { ENDPOINT_TYPE } from './constants.js';
 import { parseEndpoint } from './endpoint.js';
+import { withTimeout } from './timeout.js';
 
 /** Core's limits for the name a component passes (Core adds `<namespace>:`). */
 export const SESSION_GROUP_MAX_LENGTH = 95;
@@ -117,9 +118,10 @@ export function sessionGroupFromEndpoint(endpoint) {
  * e.g. { "D1": "dm", "C1": "group", "U1": "dm:D1" }
  */
 export const CHAT_TYPE_CACHE_PATH = path.join(DATA_DIR, 'chat-type-cache.json');
-// Core kills the session-group query after 6.5s; stay well under it so a slow
-// Slack API fails cleanly here instead of being cut off.
-export const CHAT_LOOKUP_TIMEOUT_MS = 4000;
+// Core's runner kills the session-group query after 5s; this lookup, plus Node
+// and Slack SDK startup, stays well under it so a slow Slack API fails cleanly
+// here instead of being cut off.
+export const CHAT_LOOKUP_TIMEOUT_MS = 3000;
 
 const CONVERSATION_TYPES = new Set([ENDPOINT_TYPE.DIRECT_MESSAGE, ENDPOINT_TYPE.GROUP]);
 const USER_DM_PREFIX = `${ENDPOINT_TYPE.DIRECT_MESSAGE}:`;
@@ -217,18 +219,6 @@ async function defaultOpenDm(userId) {
   return res.channel?.id;
 }
 
-async function withTimeout(promise, timeoutMs, label) {
-  let timer;
-  const timeout = new Promise((_, reject) => {
-    timer = setTimeout(() => reject(new Error(`${label} timed out after ${timeoutMs}ms`)), timeoutMs);
-  });
-  try {
-    return await Promise.race([promise, timeout]);
-  } finally {
-    clearTimeout(timer);
-  }
-}
-
 /**
  * The 1:1 DM channel (D…) for a Slack user id: from the cache, else from
  * conversations.open (then cached).
@@ -263,6 +253,22 @@ export async function resolveUserDmChannel(userId, {
 }
 
 /**
+ * A user id (U…/W…) is only ever a DM: as an endpoint it must be bare or carry
+ * `type:dm`. Shared by resolveSessionGroup and scripts/send.js so both reject
+ * the same endpoints. No-op for any other endpoint.
+ * @param {string} endpoint
+ * @throws {Error} for a user id with `|` parts and a type other than dm
+ */
+export function assertUserIdEndpointIsDm(endpoint) {
+  const raw = String(endpoint ?? '');
+  const parsed = parseEndpoint(raw);
+  if (isSlackUserId(parsed.channel) && raw.includes('|')
+      && parsed.type !== ENDPOINT_TYPE.DIRECT_MESSAGE) {
+    throw new Error(`a user id can only be a DM (type:dm): ${quote(raw)}`);
+  }
+}
+
+/**
  * Session group for any endpoint, including a bare id.
  * - With `|type:` (or any `|` part): exactly sessionGroupFromEndpoint, except
  *   that a user id with `type:dm` is first resolved to its DM channel.
@@ -289,10 +295,7 @@ export async function resolveSessionGroup(endpoint, {
   const id = parsed.channel;
 
   if (isSlackUserId(id)) {
-    const typed = endpoint.includes('|');
-    if (typed && parsed.type !== ENDPOINT_TYPE.DIRECT_MESSAGE) {
-      throw new Error(`a user id can only be a DM (type:dm): ${quote(endpoint)}`);
-    }
+    assertUserIdEndpointIsDm(endpoint);
     const dmChannel = await resolveUserDmChannel(id, { cachePath, openDm, timeoutMs });
     return sessionGroupFromEndpoint(`${dmChannel}|type:${ENDPOINT_TYPE.DIRECT_MESSAGE}`);
   }

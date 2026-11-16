@@ -8,7 +8,7 @@ import { App } from '@slack/bolt';
 dotenv.config({ path: path.join(process.env.HOME, 'zylos/.env') });
 
 import { getConfig, watchConfig, stopWatching, saveConfig, DATA_DIR } from './lib/config.js';
-import { initClient, fetchBotIdentity, getBotUserId, getClient } from './lib/client.js';
+import { initClient, createLookupClient, fetchBotIdentity, getBotUserId } from './lib/client.js';
 import {
   addReaction, removeReaction, downloadFile, getUserName,
   fetchHistory, fetchThread, sendText,
@@ -19,10 +19,14 @@ import {
 import {
   CONNECTION_MODE, DM_POLICY, ENDPOINT_TYPE, GROUP_MODE, SLACK_CHANNEL_TYPE,
 } from './lib/constants.js';
-import { createC4MessageSender } from './lib/c4-delivery.js';
+import { c4ReceiveSupportsOption, createC4MessageSender } from './lib/c4-delivery.js';
 import { buildEndpoint } from './lib/endpoint.js';
 import { recordChatType, recordUserDm } from './lib/session-group.js';
-import { fetchThreadMessages, formatThreadContext } from './lib/thread-context.js';
+import {
+  buildChannelThreadContext, buildGroupContext,
+  THREAD_CONTEXT_DEADLINE_MS, THREAD_CONTEXT_REQUEST_TIMEOUT_MS,
+} from './lib/thread-context.js';
+import { withTimeout } from './lib/timeout.js';
 import { MessageDeduplicator } from './lib/dedup.js';
 import { isGroupAccessAllowed } from './lib/policy.js';
 
@@ -68,6 +72,10 @@ if (config.connection_mode === CONNECTION_MODE.SOCKET && !appToken) {
 
 // Initialize client
 initClient(botToken);
+// Thread context is fetched before delivery: use a bounded client (no
+// retries, short timeout, rate limits fail at once) so a slow Slack API only
+// drops the context instead of stalling the message.
+const contextClient = createLookupClient(botToken, { timeoutMs: THREAD_CONTEXT_REQUEST_TIMEOUT_MS });
 
 // Ensure directories exist
 [LOGS_DIR, MEDIA_DIR, TYPING_DIR].forEach(dir => fs.mkdirSync(dir, { recursive: true }));
@@ -213,18 +221,16 @@ async function handleDM(event) {
   let threadContext = '';
   if (event.thread_ts && event.thread_ts !== event.ts) {
     try {
-      const replies = await fetchThread(event.channel, event.thread_ts, 5);
-      if (replies.length > 0) {
+      threadContext = await withTimeout((async () => {
+        const replies = await fetchThread(event.channel, event.thread_ts, 5, contextClient);
         const lines = [];
         for (const r of replies) {
           if (r.ts === event.ts) continue;
           const rName = r.user ? await getUserName(r.user) : 'bot';
           lines.push(`${rName}: ${r.text || '(media)'}`);
         }
-        if (lines.length > 0) {
-          threadContext = `<thread-context>\n${lines.join('\n')}\n</thread-context>\n\n`;
-        }
-      }
+        return lines.length > 0 ? `<thread-context>\n${lines.join('\n')}\n</thread-context>\n\n` : '';
+      })(), THREAD_CONTEXT_DEADLINE_MS, 'thread context');
     } catch (err) {
       console.warn('[slack] Failed to fetch thread context:', err.message);
     }
@@ -318,22 +324,26 @@ async function handleGroupMessage(event, isMention = false) {
   const maxHistory = (groupConfig?.historyLimit || config.message.context_messages) * 2;
   if (history.length > maxHistory) history.splice(0, history.length - maxHistory);
 
-  // Build group context. A message inside a thread is its own session group
-  // (group-<channel>:topic-<thread_ts>) on a multi-session Core, so it gets the
-  // thread root and recent replies from Slack; the in-memory history is the
-  // fallback when that fetch fails.
+  // Build group context. On a multi-session Core a message inside a thread is
+  // its own session group (group-<channel>:topic-<thread_ts>), so it gets the
+  // thread root and recent replies from Slack (bounded; the in-memory history
+  // is the fallback). An older Core gets the in-memory history as in 0.1.3.
   const contextLimit = groupConfig?.historyLimit || config.message.context_messages;
-  let groupContext = '';
-  if (event.thread_ts && event.thread_ts !== event.ts) {
-    groupContext = await buildChannelThreadContext(event, contextLimit);
-  }
-  if (!groupContext) {
-    const contextMsgs = history.slice(-contextLimit - 1, -1); // exclude current
-    if (contextMsgs.length > 0) {
-      const lines = contextMsgs.map(m => `${m.from}: ${m.text}`);
-      groupContext = `<group-context>\n${lines.join('\n')}\n</group-context>\n\n`;
-    }
-  }
+  const groupContext = await buildGroupContext({
+    event,
+    history,
+    limit: contextLimit,
+    supportsSessionGroup: c4ReceiveSupportsOption('--session-group'),
+    fetchThreadContext: () => buildChannelThreadContext({
+      client: contextClient,
+      channel: event.channel,
+      threadTs: event.thread_ts,
+      currentTs: event.ts,
+      limit: contextLimit,
+      getUserName,
+      onError: err => console.warn('[slack] Failed to fetch channel thread context:', err.message),
+    }),
+  });
 
   // Typing indicator (only for mentions or smart with mention)
   if (isMention || !isSmartNoMention) {
@@ -368,22 +378,6 @@ async function handleGroupMessage(event, isMention = false) {
     messageType: ENDPOINT_TYPE.GROUP,
     senderName: userName,
   });
-}
-
-async function buildChannelThreadContext(event, limit) {
-  try {
-    const messages = await fetchThreadMessages(getClient(), event.channel, event.thread_ts);
-    return await formatThreadContext({
-      threadTs: event.thread_ts,
-      currentTs: event.ts,
-      messages,
-      limit,
-      getUserName,
-    });
-  } catch (err) {
-    console.warn('[slack] Failed to fetch channel thread context:', err.message);
-    return '';
-  }
 }
 
 /**

@@ -42,3 +42,15 @@ test('send.js uses the shared endpoint parser and sends a user id to its DM chan
   assert.match(src, /isSlackUserId\(endpoint\.channel\)\n\s+\? await resolveUserDmChannel\(endpoint\.channel, \{ openDm: openDmChannel \}\)/);
   assert.match(src, /conversations\.open\(\{ users: userId, return_im: false \}\)/);
 });
+
+test('a user id typed as anything but a DM is refused before any Slack call (as session-group.js does)', () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'slack-send-'));
+  for (const message of ['hello', '[SKIP]']) {
+    const r = spawnSync(process.execPath, [SEND, 'U0123ABCD|type:group', message], {
+      encoding: 'utf8',
+      env: { ...process.env, HOME: home, ZYLOS_DIR: path.join(home, 'zylos'), SLACK_BOT_TOKEN: '' },
+    });
+    assert.equal(r.status, 1, message);
+    assert.match(r.stderr, /a user id can only be a DM \(type:dm\)/);
+  }
+});

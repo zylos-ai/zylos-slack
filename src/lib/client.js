@@ -13,10 +13,12 @@ export function initClient(token) {
 }
 
 /**
- * A separate Web API client for short, bounded lookups (scripts/session-group.js).
- * The SDK default retries up to 10 times over 30 minutes and waits out rate
- * limits; Core kills the session-group query after 6.5s, so this client never
- * retries and fails a rate-limited call at once.
+ * A separate Web API client for short, bounded lookups: the session-group
+ * query (scripts/session-group.js, which Core kills after 5s) and the thread
+ * context fetched before an inbound message is delivered. The SDK default
+ * retries up to 10 times over 30 minutes and waits out rate limits; this
+ * client never retries and fails a rate-limited call at once, so a slow or
+ * throttled Slack API fails fast instead of stalling the caller.
  */
 export function createLookupClient(token, { timeoutMs } = {}) {
   return new WebClient(token, {

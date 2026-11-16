@@ -111,7 +111,8 @@ channel, private channel or group DM. The type tells a multi-session Core which
 conversation the message belongs to. A bare `<channel_id>` also still works (see
 [Session Groups](#session-groups-multi-session-core)). To DM a user you only
 know by user id, use the bare `<user_id>` (`U…`/`W…`): the message goes to that
-user's DM with the bot.
+user's DM with the bot. A user id is only ever a DM: `<user_id>|type:dm` also
+works, but `<user_id>|type:group` is refused.
 
 ```bash
 # Via C4 bridge (standard path — always use stdin form)
@@ -160,8 +161,11 @@ Core adds the `slack:` namespace (e.g. `slack:dm-D0123ABCDE`).
   message in that thread lands in the thread group, not the channel group. To
   keep the context, a channel thread message carries a `<thread-context>` block
   with the thread's root message and the most recent earlier replies (from
-  `conversations.replies`; the in-memory channel history is the fallback when
-  that call fails). Threads inside a DM are not split: one group per DM.
+  `conversations.replies`, at most 1000 messages read from the oldest end; the
+  in-memory channel history is the fallback when that call fails or takes over
+  5s). Only a multi-session Core gets it; an older Core gets the same
+  in-memory `<group-context>` as before. Threads inside a DM are not split: one
+  group per DM.
 - The message `ts` (`msg:`) never affects the group.
 - Ids are used verbatim, never truncated or hashed. On a multi-session Core, an
   endpoint that cannot be mapped (no or unknown `type:`, unexpected characters,
@@ -171,7 +175,8 @@ Core adds the `slack:` namespace (e.g. `slack:dm-D0123ABCDE`).
   endpoint is sent exactly as before.
 - The group is passed only if the installed Core lists `--session-group` in
   `c4-receive-options.json` (re-read on every message, so no restart is needed
-  after a Core upgrade). Older Cores receive exactly the same arguments as before.
+  after a Core upgrade). Older Cores receive exactly the same arguments as
+  before, including the message content (no channel thread fetch).
 - If Core rejects a message, Core's raw text goes only to the component log. In
   the message's thread the user gets "Sorry, I couldn't take this message right
   now. Please try again later." when Core says nothing was stored, and "Sorry,
@@ -203,8 +208,8 @@ resolved, never to a thread group:
 - A user id (`U…`/`W…`): the user's DM channel, from the cache (recorded for
   every inbound DM) or from `conversations.open`, mapped to `dm-<D…>`, the same
   group as the user's own DMs.
-- Lookups time out after 4s with no SDK retries, so they fail cleanly before
-  Core's 6.5s limit for this query. If a lookup fails (for example
+- Lookups time out after 3s with no SDK retries, so they fail cleanly before
+  Core's 5s limit for this query. If a lookup fails (for example
   `channel_not_found`, `missing_scope`, a rate limit or a timeout), the script
   prints an error to stderr and exits 1 with empty stdout; nothing is guessed or
   cached, and Core does not send the message. A wrong argument count or an

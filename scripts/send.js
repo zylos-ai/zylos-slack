@@ -11,7 +11,7 @@
  * Endpoint format:
  *   channelId|type:dm|msg:timestamp|thread:threadTs
  *   A bare id (C…, G…, D…) or a user id (U…/W…, sent to the user's DM) also
- *   works for proactive sends.
+ *   works for proactive sends. A user id with `|` parts must be `type:dm`.
  */
 
 import dotenv from 'dotenv';
@@ -27,7 +27,9 @@ import {
   sendImage, sendFile,
 } from '../src/lib/message.js';
 import { parseEndpoint } from '../src/lib/endpoint.js';
-import { isSlackUserId, resolveUserDmChannel } from '../src/lib/session-group.js';
+import {
+  assertUserIdEndpointIsDm, isSlackUserId, resolveUserDmChannel,
+} from '../src/lib/session-group.js';
 
 const TYPING_DIR = path.join(DATA_DIR, 'typing');
 
@@ -42,6 +44,15 @@ const endpointRaw = args[0];
 const message = args.slice(1).join(' ');
 
 const endpoint = parseEndpoint(endpointRaw);
+
+// A user id is only ever a DM (same rule as scripts/session-group.js), so
+// `U…|type:group` is refused instead of being sent to the user's DM.
+try {
+  assertUserIdEndpointIsDm(endpointRaw);
+} catch (err) {
+  console.error(`[send] ${err.message}`);
+  process.exit(1);
+}
 
 // Check for [SKIP] (smart group: no response needed)
 if (message.trim() === '[SKIP]') {

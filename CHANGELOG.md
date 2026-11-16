@@ -14,8 +14,9 @@
   sent and the user is asked to try again later (never the overall group). The
   option is passed only when the installed Core lists it in
   `c4-receive-options.json` (re-read on every message); on older Cores no session
-  group is derived at all, so they receive exactly the same arguments as before
-  (`src/lib/session-group.js`, `src/lib/c4-delivery.js`, `src/lib/endpoint.js`).
+  group is derived at all and channel thread messages get no Slack thread
+  fetch, so they receive exactly the same arguments, including `--content`, as
+  before (`src/lib/session-group.js`, `src/lib/c4-delivery.js`, `src/lib/endpoint.js`).
 - `scripts/session-group.js <endpoint>` prints the session group for an
   endpoint (exit 0), or exits 1 with empty stdout for bad input or a failed
   lookup. Core uses it to check which thread owns an outbound address. A bare
@@ -28,12 +29,17 @@
   with the bot (`conversations.open`, also needed for file uploads) and maps to
   `dm-<D…>`, the same session group as that user's inbound DMs. Inbound DMs
   record the user's DM channel in the cache.
-- Channel thread messages carry a `<thread-context>` block with the thread's
-  root message and the most recent earlier replies (`conversations.replies`),
-  because each thread is its own session group. If the call fails, the
-  in-memory channel history is used as before.
+- On a multi-session Core, channel thread messages carry a `<thread-context>`
+  block with the thread's root message and the most recent earlier replies
+  (`conversations.replies`), because each thread is its own session group. If
+  the call fails or takes longer than 5s, the in-memory channel history is used
+  as before. Older Cores (no `--session-group`) keep the 0.1.3 content: the
+  in-memory `<group-context>`, with no thread fetch. Known limitation: pages are
+  read from the oldest end, up to 1000 messages, so in a longer thread the
+  newest replies may be missing.
 - Lookups run on a separate Web API client with no retries and fail
-  rate-limited calls at once, with a 4s timeout (Core kills the query at 6.5s).
+  rate-limited calls at once, with a 3s timeout (Core's runner kills the
+  session-group query at 5s).
 - README lists the `message.mpim` event and the `mpim:history` / `mpim:read`
   scopes; group DMs were already handled as channels but an app configured from
   the README never received them.
@@ -58,6 +64,15 @@ These also apply on older Cores:
   the same message again after a failed attempt.
 - Only an explicit `{ "ok": true }` on a clean exit counts as delivered; any
   other output is an unknown outcome (not resent).
+- Thread context (channel threads, and the existing DM thread context) is
+  fetched on that bounded client (3s per call, no retries, rate limits fail at
+  once) and given up after 5s overall, so a slow or rate-limited Slack API no
+  longer delays the hourglass and delivery (previously up to the SDK's 10
+  retries). In that case the DM message is delivered without its
+  `<thread-context>` block, as it already was when the call failed.
+- `scripts/send.js` refuses a user id with a type other than DM
+  (`U…|type:group`), as `scripts/session-group.js` does, instead of sending to
+  the user's DM.
 - `c4-receive` is resolved from `$ZYLOS_DIR` (default `$HOME/zylos`) and run with
   the current Node binary (`process.execPath`) instead of `node` from `PATH`.
 - `buildEndpoint` / `parseEndpoint` moved to `src/lib/endpoint.js`; the endpoint

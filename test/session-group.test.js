@@ -8,6 +8,7 @@ import { fileURLToPath } from 'node:url';
 
 import { buildEndpoint } from '../src/lib/endpoint.js';
 import {
+  assertUserIdEndpointIsDm,
   CHAT_LOOKUP_TIMEOUT_MS,
   chatTypeFromConversation,
   isSlackUserId,
@@ -179,8 +180,8 @@ test('chatTypeFromConversation maps im to dm and channel/group/mpim to group onl
   assert.equal(chatTypeFromConversation({ is_im: 'yes' }), null);
 });
 
-test('lookup timeout stays well under Core\'s 6.5s session-group query limit', () => {
-  assert.ok(CHAT_LOOKUP_TIMEOUT_MS <= 5000);
+test('lookup timeout leaves margin under Core\'s 5s session-group query limit', () => {
+  assert.ok(CHAT_LOOKUP_TIMEOUT_MS <= 3000);
 });
 
 const noFetch = async () => { throw new Error('API must not be called'); };
@@ -278,6 +279,15 @@ test('bare user id: cache miss, conversations.open -> dm-<D…>, same group as t
 test('user id typed as a group is rejected without a lookup', async () => {
   await assert.rejects(resolveSessionGroup(`${USER}|type:group`, { cachePath: tmpCachePath(), ...noLookups }),
     /only be a DM/);
+});
+
+test('assertUserIdEndpointIsDm: a user id must be bare or type:dm; other ids pass', () => {
+  for (const ep of [USER, `${USER}|type:dm`, `${USER}|type:dm|msg:1.1`, 'C0123|type:group', 'C0123', 'D0123|type:dm']) {
+    assert.doesNotThrow(() => assertUserIdEndpointIsDm(ep), ep);
+  }
+  for (const ep of [`${USER}|type:group`, `${USER}|thread:1.1`, `${USER}|type:`, 'W0123ABC|type:group']) {
+    assert.throws(() => assertUserIdEndpointIsDm(ep), /only be a DM/, ep);
+  }
 });
 
 test('bare user id: open failure, timeout or a bad channel id throws and caches nothing', async () => {

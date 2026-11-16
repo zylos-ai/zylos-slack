@@ -5,8 +5,8 @@
  * Success: group name (without the `slack:` namespace) on stdout, exit 0.
  * An endpoint with `|type:` is mapped directly. A bare conversation id is
  * resolved via the local cache or, on a miss, Slack conversations.info; a
- * user id (U…/W…) via the cache or conversations.open (~4s timeout, well
- * under Core's 6.5s query limit, no SDK retries).
+ * user id (U…/W…) via the cache or conversations.open (3s timeout, well
+ * under Core's 5s query limit, no SDK retries).
  * Wrong arguments, an endpoint that cannot be mapped, or a failed lookup:
  * message on stderr, nothing on stdout, exit 1 (never guessed).
  */
