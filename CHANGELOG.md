@@ -1,5 +1,73 @@
 # Changelog
 
+## 0.2.0 (2026-11-16)
+
+### Added
+
+- **Session groups for multi-session zylos-core.** Each inbound message is
+  passed to `c4-receive` with `--session-group`, derived only from its endpoint:
+  `dm-<channel>` for DMs (threads inside a DM are not split), `group-<channel>`
+  for top-level messages in channels, private channels and group DMs, and
+  `group-<channel>:topic-<thread_ts>` for channel messages inside a thread. Core
+  adds the `slack:` namespace. The rules are fixed: group names are Core's
+  memory keys. Ids are used verbatim; an endpoint that cannot be mapped is not
+  sent and the user is asked to try again later (never the overall group). The
+  option is passed only when the installed Core lists it in
+  `c4-receive-options.json` (re-read on every message); on older Cores no session
+  group is derived at all, so they receive exactly the same arguments as before
+  (`src/lib/session-group.js`, `src/lib/c4-delivery.js`, `src/lib/endpoint.js`).
+- `scripts/session-group.js <endpoint>` prints the session group for an
+  endpoint (exit 0), or exits 1 with empty stdout for bad input or a failed
+  lookup. Core uses it to check which thread owns an outbound address. A bare
+  conversation id maps to `dm-<id>` or `group-<id>` (never a thread group); its
+  type comes from a local cache (`~/zylos/components/slack/chat-type-cache.json`,
+  written for every inbound message and after each successful lookup) or, on a
+  miss, from Slack `conversations.info`. The id prefix is never used to guess
+  DM vs channel.
+- Proactive DM to a user id: a bare `U…`/`W…` endpoint is sent to the user's DM
+  with the bot (`conversations.open`, also needed for file uploads) and maps to
+  `dm-<D…>`, the same session group as that user's inbound DMs. Inbound DMs
+  record the user's DM channel in the cache.
+- Channel thread messages carry a `<thread-context>` block with the thread's
+  root message and the most recent earlier replies (`conversations.replies`),
+  because each thread is its own session group. If the call fails, the
+  in-memory channel history is used as before.
+- Lookups run on a separate Web API client with no retries and fail
+  rate-limited calls at once, with a 4s timeout (Core kills the query at 6.5s).
+- README lists the `message.mpim` event and the `mpim:history` / `mpim:read`
+  scopes; group DMs were already handled as channels but an app configured from
+  the README never received them.
+
+### Changed
+
+These also apply on older Cores:
+
+- A `c4-receive` call that exceeds the 35s timeout is killed and treated as an
+  unknown outcome: the user is told the message may not have arrived and it is
+  not resent. Previously timeouts, crashes and most rejections were retried
+  once, which could deliver a message Core had already stored twice.
+- Only a `c4-receive` that could not be started is retried (once, after 2s).
+  Rejections are classified by `error.persisted`: stored (nothing sent to the
+  user, hourglass cleared), not stored ("Sorry, I couldn't take this message
+  right now. Please try again later."), or uncertain ("Sorry, this message may
+  not have reached me. If you don't get a reply in a few minutes, please send it
+  again."). The notice is posted in the message's thread; Core's raw error text
+  only goes to the log.
+- Every delivery outcome is final for the event deduplicator, so an equivalent
+  Slack event (`message` + `app_mention` for one message) can no longer deliver
+  the same message again after a failed attempt.
+- Only an explicit `{ "ok": true }` on a clean exit counts as delivered; any
+  other output is an unknown outcome (not resent).
+- `c4-receive` is resolved from `$ZYLOS_DIR` (default `$HOME/zylos`) and run with
+  the current Node binary (`process.execPath`) instead of `node` from `PATH`.
+- `buildEndpoint` / `parseEndpoint` moved to `src/lib/endpoint.js`; the endpoint
+  format is unchanged.
+
+### Fixed
+
+- `scripts/send.js` no longer writes a `<channel>-undefined.done` typing file for
+  a proactive send without `msg:`.
+
 ## 0.1.3 (2026-09-08)
 
 ### Added

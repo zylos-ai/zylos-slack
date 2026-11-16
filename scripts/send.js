@@ -10,6 +10,8 @@
  *
  * Endpoint format:
  *   channelId|type:dm|msg:timestamp|thread:threadTs
+ *   A bare id (C…, G…, D…) or a user id (U…/W…, sent to the user's DM) also
+ *   works for proactive sends.
  */
 
 import dotenv from 'dotenv';
@@ -18,12 +20,14 @@ import fs from 'fs';
 
 dotenv.config({ path: path.join(process.env.HOME, 'zylos/.env') });
 
-import { initClient } from '../src/lib/client.js';
+import { initClient, getClient } from '../src/lib/client.js';
 import { getConfig, DATA_DIR } from '../src/lib/config.js';
 import {
   sendText, sendMarkdown, sendLongMessage,
   sendImage, sendFile,
 } from '../src/lib/message.js';
+import { parseEndpoint } from '../src/lib/endpoint.js';
+import { isSlackUserId, resolveUserDmChannel } from '../src/lib/session-group.js';
 
 const TYPING_DIR = path.join(DATA_DIR, 'typing');
 
@@ -36,17 +40,6 @@ if (args.length < 2) {
 
 const endpointRaw = args[0];
 const message = args.slice(1).join(' ');
-
-// Parse endpoint
-function parseEndpoint(ep) {
-  const parts = ep.split('|');
-  const result = { channel: parts[0] };
-  for (const part of parts.slice(1)) {
-    const [key, val] = part.split(':');
-    result[key] = val;
-  }
-  return result;
-}
 
 const endpoint = parseEndpoint(endpointRaw);
 
@@ -72,7 +65,12 @@ const mediaMatch = message.match(/^\[MEDIA:(\w+)\](.+)$/);
 
 async function send() {
   try {
-    const channel = endpoint.channel;
+    // A user id is sent to the user's 1:1 DM (conversations.open, cached); file
+    // uploads need the D… channel, and it is the same conversation (and
+    // session group) as the user's inbound DMs.
+    const channel = isSlackUserId(endpoint.channel)
+      ? await resolveUserDmChannel(endpoint.channel, { openDm: openDmChannel })
+      : endpoint.channel;
     const threadTs = endpoint.thread || endpoint.msg;
     const opts = {};
     if (threadTs) opts.thread_ts = threadTs;
@@ -108,7 +106,14 @@ async function send() {
   }
 }
 
+async function openDmChannel(userId) {
+  const res = await getClient().conversations.open({ users: userId, return_im: false });
+  return res.channel?.id;
+}
+
 function markTypingDone(ep) {
+  // Only a reply to an inbound message has a typing indicator to clear.
+  if (!ep.msg) return;
   const key = `${ep.channel}-${ep.msg}`;
   const doneFile = path.join(TYPING_DIR, `${key}.done`);
   try {

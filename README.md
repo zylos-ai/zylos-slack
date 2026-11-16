@@ -6,7 +6,8 @@ Slack communication channel for [Zylos](https://github.com/zylos-ai).
 
 - **Socket Mode** (default) — no public URL needed
 - **Webhook mode** — for environments with public endpoints
-- DM and channel message handling
+- DM, channel, private channel and group DM (mpim) message handling
+- Session groups for multi-session zylos-core: one conversation per DM, channel and channel thread (see SKILL.md)
 - Thread-aware replies
 - File/image upload and download
 - Access control (DM policy + per-channel allowlists)
@@ -33,10 +34,12 @@ Slack communication channel for [Zylos](https://github.com/zylos-ai).
    - `im:history`
    - `im:read`
    - `im:write`
+   - `mpim:history`
+   - `mpim:read`
    - `reactions:read`
    - `reactions:write`
    - `users:read`
-4. Install the app to your workspace
+4. Install the app to your workspace (reinstall it after adding scopes)
 5. Copy the **Bot User OAuth Token** (`xoxb-...`)
 
 ### 2. Enable Socket Mode
@@ -51,6 +54,7 @@ Slack communication channel for [Zylos](https://github.com/zylos-ai).
    - `message.im`
    - `message.channels`
    - `message.groups`
+   - `message.mpim`
    - `app_mention`
 
 ### 4. Configure Environment

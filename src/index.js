@@ -8,10 +8,10 @@ import { App } from '@slack/bolt';
 dotenv.config({ path: path.join(process.env.HOME, 'zylos/.env') });
 
 import { getConfig, watchConfig, stopWatching, saveConfig, DATA_DIR } from './lib/config.js';
-import { initClient, fetchBotIdentity, getBotUserId } from './lib/client.js';
+import { initClient, fetchBotIdentity, getBotUserId, getClient } from './lib/client.js';
 import {
   addReaction, removeReaction, downloadFile, getUserName,
-  fetchHistory, fetchThread,
+  fetchHistory, fetchThread, sendText,
 } from './lib/message.js';
 import {
   getMessageDedupKey, isBotMentioned, resolveUserMentions, shouldHandleGroupMessage,
@@ -19,14 +19,15 @@ import {
 import {
   CONNECTION_MODE, DM_POLICY, ENDPOINT_TYPE, GROUP_MODE, SLACK_CHANNEL_TYPE,
 } from './lib/constants.js';
-import { createC4Deliverer, createC4MessageSender } from './lib/c4-delivery.js';
+import { createC4MessageSender } from './lib/c4-delivery.js';
+import { buildEndpoint } from './lib/endpoint.js';
+import { recordChatType, recordUserDm } from './lib/session-group.js';
+import { fetchThreadMessages, formatThreadContext } from './lib/thread-context.js';
 import { MessageDeduplicator } from './lib/dedup.js';
 import { isGroupAccessAllowed } from './lib/policy.js';
 
 // ── Constants ──
 
-const C4_RECEIVE = path.join(process.env.HOME,
-  'zylos/.claude/skills/comm-bridge/scripts/c4-receive.js');
 const LOGS_DIR = path.join(DATA_DIR, 'logs');
 const MEDIA_DIR = path.join(DATA_DIR, 'media');
 const TYPING_DIR = path.join(DATA_DIR, 'typing');
@@ -71,18 +72,17 @@ initClient(botToken);
 // Ensure directories exist
 [LOGS_DIR, MEDIA_DIR, TYPING_DIR].forEach(dir => fs.mkdirSync(dir, { recursive: true }));
 
-const deliverToC4 = createC4Deliverer({ scriptPath: C4_RECEIVE });
+// c4-receive is resolved from $ZYLOS_DIR (default $HOME/zylos) on every call;
+// --session-group is passed only when the installed Core declares it.
 const sendToC4 = createC4MessageSender({
-  deliver: deliverToC4,
   onDelivered: record => {
     console.log(`[slack] Sent to C4: ${record.content.substring(0, 60)}...`);
   },
-  onRetry: (record, error, retryNumber, delay) => {
-    console.warn(`[slack] C4 delivery ${record.msgId} failed (${error.code}), retry ${retryNumber} in ${delay}ms: ${error.message}`);
-  },
-  onFailed: async (record, error) => {
-    console.error(`[slack] C4 delivery ${record.msgId} failed after bounded retries (${error.code}): ${error.message}`);
+  // Every outcome is final (never resent). notice is null when Core already
+  // stored the message: clear the hourglass and send nothing.
+  onRejected: async (record, notice) => {
     await clearFailedTypingIndicator(record);
+    if (notice) await sendRejectNotice(record, notice);
   },
 });
 
@@ -154,6 +154,10 @@ async function main() {
 
 async function handleDM(event) {
   const userId = event.user;
+  // Remember DM vs group (and the user's DM channel) so a bare id used for a
+  // proactive send maps to its session group without an API call.
+  recordChatType(event.channel, ENDPOINT_TYPE.DIRECT_MESSAGE);
+  recordUserDm(userId, event.channel);
   const userName = await getUserName(userId);
 
   // Owner auto-binding
@@ -247,6 +251,7 @@ async function handleDM(event) {
     content: c4Message,
     channel: event.channel,
     ts: event.ts,
+    threadTs: event.thread_ts,
     hasTypingIndicator: true,
     messageType: ENDPOINT_TYPE.DIRECT_MESSAGE,
     senderName: userName,
@@ -258,6 +263,8 @@ async function handleDM(event) {
 async function handleGroupMessage(event, isMention = false) {
   const channelId = event.channel;
   const userId = event.user;
+  // Channels, private channels and group DMs (mpim) are all groups.
+  recordChatType(channelId, ENDPOINT_TYPE.GROUP);
   const isOwner = userId === config.owner?.user_id;
   const groupConfig = config.groups?.[channelId];
 
@@ -311,13 +318,21 @@ async function handleGroupMessage(event, isMention = false) {
   const maxHistory = (groupConfig?.historyLimit || config.message.context_messages) * 2;
   if (history.length > maxHistory) history.splice(0, history.length - maxHistory);
 
-  // Build group context
+  // Build group context. A message inside a thread is its own session group
+  // (group-<channel>:topic-<thread_ts>) on a multi-session Core, so it gets the
+  // thread root and recent replies from Slack; the in-memory history is the
+  // fallback when that fetch fails.
   const contextLimit = groupConfig?.historyLimit || config.message.context_messages;
-  const contextMsgs = history.slice(-contextLimit - 1, -1); // exclude current
   let groupContext = '';
-  if (contextMsgs.length > 0) {
-    const lines = contextMsgs.map(m => `${m.from}: ${m.text}`);
-    groupContext = `<group-context>\n${lines.join('\n')}\n</group-context>\n\n`;
+  if (event.thread_ts && event.thread_ts !== event.ts) {
+    groupContext = await buildChannelThreadContext(event, contextLimit);
+  }
+  if (!groupContext) {
+    const contextMsgs = history.slice(-contextLimit - 1, -1); // exclude current
+    if (contextMsgs.length > 0) {
+      const lines = contextMsgs.map(m => `${m.from}: ${m.text}`);
+      groupContext = `<group-context>\n${lines.join('\n')}\n</group-context>\n\n`;
+    }
   }
 
   // Typing indicator (only for mentions or smart with mention)
@@ -348,10 +363,42 @@ async function handleGroupMessage(event, isMention = false) {
     content: c4Message,
     channel: event.channel,
     ts: event.ts,
+    threadTs: event.thread_ts,
     hasTypingIndicator: isMention || !isSmartNoMention,
     messageType: ENDPOINT_TYPE.GROUP,
     senderName: userName,
   });
+}
+
+async function buildChannelThreadContext(event, limit) {
+  try {
+    const messages = await fetchThreadMessages(getClient(), event.channel, event.thread_ts);
+    return await formatThreadContext({
+      threadTs: event.thread_ts,
+      currentTs: event.ts,
+      messages,
+      limit,
+      getUserName,
+    });
+  } catch (err) {
+    console.warn('[slack] Failed to fetch channel thread context:', err.message);
+    return '';
+  }
+}
+
+/**
+ * Tell the user the agent will not answer this message (TRY_LATER /
+ * MAYBE_LOST). Posted where a reply would go: the message's thread, as
+ * scripts/send.js does. Smart-mode messages without an @mention are handled
+ * the same way.
+ */
+async function sendRejectNotice(record, notice) {
+  if (!record.channel) return;
+  try {
+    await sendText(record.channel, notice, { thread_ts: record.threadTs || record.ts });
+  } catch (err) {
+    console.error(`[slack] Reject notice for ${record.msgId} failed: ${err.message}`);
+  }
 }
 
 async function clearFailedTypingIndicator(record) {
@@ -394,12 +441,6 @@ function checkTypingDone() {
 }
 
 // ── Helpers ──
-
-function buildEndpoint(channel, type, msgTs, threadTs) {
-  let ep = `${channel}|type:${type}|msg:${msgTs}`;
-  if (threadTs) ep += `|thread:${threadTs}`;
-  return ep;
-}
 
 function logMessage(channelId, entry) {
   const logFile = path.join(LOGS_DIR, `${channelId}.log`);
