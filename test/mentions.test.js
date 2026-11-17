@@ -57,21 +57,30 @@ test('message and app_mention deliveries use the same deduplication key', () => 
   assert.equal(getMessageDedupKey(messageEvent), getMessageDedupKey(mentionEvent));
 });
 
-test('a file_share message is handled like a plain user message', () => {
-  const base = { type: 'message', channel: 'C123', user: 'U123', ts: '1725000000.000002' };
+// Event shapes follow @slack/types (FileShareMessageEvent, GenericMessageEvent,
+// BotMessageEvent); they are not captured from a live Slack payload.
+test('a user file_share message is handled like a plain user message', () => {
+  const base = {
+    type: 'message', channel: 'C123', channel_type: 'channel', user: 'U123',
+    ts: '1725000000.000002', event_ts: '1725000000.000002',
+  };
 
-  assert.equal(shouldIgnoreMessageEvent(base), false);
+  assert.equal(shouldIgnoreMessageEvent({ ...base, text: 'hello', client_msg_id: 'c-1' }), false);
   assert.equal(shouldIgnoreMessageEvent({
     ...base,
     subtype: 'file_share',
     text: 'see attached',
-    files: [{ name: 'report.pdf', url_private_download: 'https://files.slack.com/report.pdf' }],
+    upload: false,
+    display_as_bot: false,
+    files: [{ id: 'F1', name: 'report.pdf', mimetype: 'application/pdf', size: 1024 }],
   }), false);
   assert.equal(shouldIgnoreMessageEvent({
     ...base,
     subtype: 'file_share',
     text: '',
-    files: [{ name: 'photo.png', mimetype: 'image/png' }],
+    upload: false,
+    display_as_bot: false,
+    files: [{ id: 'F2', name: 'photo.png', mimetype: 'image/png', size: 2048 }],
   }), false);
 });
 
@@ -80,10 +89,26 @@ test('bot messages and every other subtype are still ignored', () => {
 
   for (const subtype of [
     'bot_message', 'message_changed', 'message_deleted', 'message_replied',
-    'channel_join', 'channel_leave', 'channel_topic', 'thread_broadcast', 'me_message',
+    'channel_join', 'channel_leave', 'channel_topic', 'me_message',
   ]) {
     assert.equal(shouldIgnoreMessageEvent({ ...base, subtype }), true, subtype);
   }
-  assert.equal(shouldIgnoreMessageEvent({ ...base, bot_id: 'B123' }), true);
-  assert.equal(shouldIgnoreMessageEvent({ ...base, bot_id: 'B123', subtype: 'file_share' }), true);
+});
+
+test('a message marked as from a bot is ignored, file_share included', () => {
+  const base = { type: 'message', channel: 'C123', ts: '1725000000.000004' };
+  const botProfile = { id: 'B123', app_id: 'A123', name: 'other-bot' };
+
+  // GenericMessageEvent posted by an app: bot_id + bot_profile.
+  assert.equal(shouldIgnoreMessageEvent({ ...base, user: 'U999', bot_id: 'B123', bot_profile: botProfile, text: 'hi' }), true);
+  assert.equal(shouldIgnoreMessageEvent({ ...base, user: 'U999', bot_profile: botProfile, text: 'hi' }), true);
+  // FileShareMessageEvent has no bot_id; display_as_bot marks a bot upload.
+  assert.equal(shouldIgnoreMessageEvent({
+    ...base, subtype: 'file_share', user: 'U999', text: '', display_as_bot: true,
+    files: [{ id: 'F3', name: 'export.csv', size: 10 }],
+  }), true);
+  assert.equal(shouldIgnoreMessageEvent({
+    ...base, subtype: 'file_share', user: 'U999', text: '', bot_id: 'B123',
+    files: [{ id: 'F4', name: 'export.csv', size: 10 }],
+  }), true);
 });

@@ -27,6 +27,13 @@ export const DEFAULT_CONFIG = {
   message: {
     context_messages: 10,
     useMarkdown: true              // use Slack mrkdwn formatting
+  },
+
+  // Inbound file downloads. A larger file, or one not downloaded in time, is
+  // labeled instead of saved; the message text is still delivered.
+  media: {
+    max_download_size_mb: 50,
+    download_timeout_seconds: 30
   }
 };
 

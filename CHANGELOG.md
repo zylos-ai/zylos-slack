@@ -4,19 +4,24 @@
 
 ### Upgrade notes
 
-Slack apps created from an older README lack some scopes and events this
-version uses. Add them in the Slack app settings, then **reinstall the app** to
-the workspace (Slack applies new scopes only after a reinstall):
+Slack applies added scopes and event subscriptions only after the app is
+**reinstalled** to the workspace.
 
-- **Proactive send to a bare channel id** (`C…`/`G…`/`D…` without `|type:`)
-  looks up the channel type with Slack `conversations.info` when the id is not
-  in the local cache yet (no message received from it), which needs the
-  `channels:read` and `groups:read` scopes. Without them the lookup fails with
-  `missing_scope`, so the id cannot be mapped to a session group and Core does
-  not send the message.
-- **Group DMs (mpim)** need the `mpim:history` and `mpim:read` scopes and the
-  `message.mpim` bot event subscription (README, "Create Slack App" and
-  "Enable Events"). Without them the bot never receives group DM messages.
+- **Group DMs (mpim) are new requirements.** Apps set up from the 0.1.x README
+  lack the `mpim:history` and `mpim:read` scopes and the `message.mpim` bot
+  event. Add them (README, "Create Slack App" and "Enable Events") and
+  reinstall the app. Without them the bot never receives group DM messages, and
+  a proactive send to a bare group DM id fails its lookup with `missing_scope`.
+- **Proactive send to a bare conversation id** (`C…`/`G…`/`D…` without
+  `|type:`) that the service has not received a message from yet looks up the
+  conversation type with Slack `conversations.info`. That call needs the read
+  scope of the conversation's own type: `channels:read` (public channel),
+  `groups:read` (private channel), `im:read` (DM) or `mpim:read` (group DM).
+  The first three have been in the README since 0.1.0, so an app set up from
+  it only lacks `mpim:read`. If the lookup still fails with `missing_scope`,
+  the app was configured with fewer scopes than the README lists: add the
+  scope for that conversation type and reinstall. Until then the id cannot be
+  mapped to a session group and Core does not send the message.
 
 ### Added
 
@@ -105,12 +110,20 @@ These also apply on older Cores:
 - `scripts/send.js` no longer writes a `<channel>-undefined.done` typing file for
   a proactive send without `msg:`.
 - Messages a user posts with a file attached (Slack subtype `file_share`, with
-  or without text) are delivered again instead of being dropped by the subtype
-  filter. Their text is delivered and the files go through the existing
-  download path (`[file: name]` / `[image: name]` plus a `---- file:` line).
-  All other subtypes (edits, deletions, joins, bot messages, ...) are still
-  ignored. A channel file whose download fails is now listed as
-  `[file: name (download failed)]`, as in DMs, instead of being left out.
+  or without text) are now delivered; 0.1.x dropped them with every other
+  subtype, so DM and channel file uploads never reached Core. Their text is
+  delivered and the files go through the existing download path
+  (`[file: name]` / `[image: name]` plus a `---- file:` line). All other
+  subtypes (edits, deletions, joins, bot messages, ...) are still ignored, and
+  a `message` event marked as from a bot (`bot_id`, `bot_profile` or
+  `display_as_bot`) is ignored whatever its subtype.
+- Inbound file downloads are bounded: a file over `media.max_download_size_mb`
+  (default 50, as in the wecom component), by Slack's file size before
+  fetching or by the bytes received, is not saved and is listed as
+  `[file: name (too large)]`. A download is aborted after
+  `media.download_timeout_seconds` (default 30) and, like any other failed
+  download, listed as `[file: name (download failed)]`, in DMs and channels
+  (a channel file whose download failed used to be left out).
 
 ## 0.1.3 (2026-09-08)
 
