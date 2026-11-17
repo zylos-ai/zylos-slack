@@ -4,6 +4,8 @@ import assert from 'node:assert/strict';
 import {
   C4_ERROR_CODE,
   C4_ERROR_CODE_VALUES,
+  C4_OUTCOME,
+  C4_OUTCOME_VALUES,
   CLI_TOGGLE,
   CLI_TOGGLE_VALUES,
   CONNECTION_MODE,
@@ -20,16 +22,20 @@ import {
   GROUP_POLICY_VALUES,
   SLACK_CHANNEL_TYPE,
   SLACK_CHANNEL_TYPE_VALUES,
+  SLACK_MESSAGE_SUBTYPE,
+  SLACK_MESSAGE_SUBTYPE_VALUES,
 } from '../src/lib/constants.js';
 
 const enumCases = [
   [C4_ERROR_CODE, C4_ERROR_CODE_VALUES, ['INVALID_ARGS', 'INTERNAL_ERROR', 'UNHEALTHY_NOTIFY_FAILED', 'TRANSPORT_ERROR', 'PROTOCOL_ERROR']],
+  [C4_OUTCOME, C4_OUTCOME_VALUES, ['sent', 'stored', 'not_stored', 'uncertain', 'unknown', 'failed', 'no_group', 'empty']],
   [CONNECTION_MODE, CONNECTION_MODE_VALUES, ['socket', 'webhook']],
   [DEDUP_STATE, DEDUP_STATE_VALUES, ['processing', 'done']],
   [DM_POLICY, DM_POLICY_VALUES, ['open', 'allowlist', 'owner']],
   [GROUP_POLICY, GROUP_POLICY_VALUES, ['disabled', 'allowlist', 'open']],
   [GROUP_MODE, GROUP_MODE_VALUES, ['mention', 'smart']],
-  [SLACK_CHANNEL_TYPE, SLACK_CHANNEL_TYPE_VALUES, ['im', 'channel', 'group']],
+  [SLACK_CHANNEL_TYPE, SLACK_CHANNEL_TYPE_VALUES, ['im', 'channel', 'group', 'mpim']],
+  [SLACK_MESSAGE_SUBTYPE, SLACK_MESSAGE_SUBTYPE_VALUES, ['file_share']],
   [ENDPOINT_TYPE, ENDPOINT_TYPE_VALUES, ['dm', 'group']],
   [CLI_TOGGLE, CLI_TOGGLE_VALUES, ['on', 'off']],
 ];

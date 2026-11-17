@@ -2,6 +2,7 @@ import fs from 'fs';
 import path from 'path';
 import { getClient } from './client.js';
 import { DATA_DIR } from './config.js';
+import { discardBody, getMediaLimits, readBodyWithinLimit } from './files.js';
 
 const MEDIA_DIR = path.join(DATA_DIR, 'media');
 
@@ -118,13 +119,20 @@ export async function sendFile(channel, filePath, opts = {}) {
 
 /**
  * Download a Slack file to local media directory.
+ * The whole download (headers and body) is aborted after timeoutMs, and a
+ * body over maxBytes fails with FileTooLargeError before it is written.
  * @param {string} url - Slack file URL (url_private_download)
  * @param {string} filename - Original filename
+ * @param {object} opts - { maxBytes, timeoutMs, fetchImpl }
  * @returns {string} Local file path
  */
-export async function downloadFile(url, filename) {
-  const client = getClient();
-  const sanitized = filename.replace(/[^a-zA-Z0-9._-]/g, '_');
+export async function downloadFile(url, filename, {
+  maxBytes = getMediaLimits().maxBytes,
+  timeoutMs = getMediaLimits().timeoutMs,
+  fetchImpl = fetch,
+} = {}) {
+  if (!url) throw new Error('File has no download URL');
+  const sanitized = (filename || 'file').replace(/[^a-zA-Z0-9._-]/g, '_');
   const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
   const localName = `slack-${timestamp}-${sanitized}`;
   const savePath = path.join(MEDIA_DIR, localName);
@@ -135,15 +143,18 @@ export async function downloadFile(url, filename) {
     throw new Error('Path traversal detected');
   }
 
-  fs.mkdirSync(MEDIA_DIR, { recursive: true });
-
-  const response = await fetch(url, {
+  const response = await fetchImpl(url, {
     headers: { Authorization: `Bearer ${process.env.SLACK_BOT_TOKEN}` },
+    signal: AbortSignal.timeout(timeoutMs),
   });
 
-  if (!response.ok) throw new Error(`Download failed: ${response.status}`);
+  if (!response.ok) {
+    await discardBody(response);
+    throw new Error(`Download failed: ${response.status}`);
+  }
 
-  const buffer = Buffer.from(await response.arrayBuffer());
+  const buffer = await readBodyWithinLimit(response, maxBytes);
+  fs.mkdirSync(MEDIA_DIR, { recursive: true });
   fs.writeFileSync(savePath, buffer);
 
   return savePath;
@@ -193,9 +204,9 @@ export async function fetchHistory(channel, limit = 10, latest) {
 
 /**
  * Fetch thread replies.
+ * @param {object} [client] - WebClient to use (default: the main client)
  */
-export async function fetchThread(channel, threadTs, limit = 10) {
-  const client = getClient();
+export async function fetchThread(channel, threadTs, limit = 10, client = getClient()) {
   const res = await client.conversations.replies({
     channel,
     ts: threadTs,

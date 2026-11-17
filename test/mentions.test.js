@@ -5,7 +5,9 @@ import {
   getMessageDedupKey,
   isBotMentioned,
   resolveUserMentions,
+  isBotEvent,
   shouldHandleGroupMessage,
+  shouldIgnoreMessageEvent,
 } from '../src/lib/mentions.js';
 import { GROUP_MODE } from '../src/lib/constants.js';
 
@@ -54,4 +56,71 @@ test('message and app_mention deliveries use the same deduplication key', () => 
   const mentionEvent = { channel: 'C123', ts: '1725000000.000001' };
 
   assert.equal(getMessageDedupKey(messageEvent), getMessageDedupKey(mentionEvent));
+});
+
+// Event shapes follow @slack/types (FileShareMessageEvent, GenericMessageEvent,
+// BotMessageEvent); they are not captured from a live Slack payload.
+test('a user file_share message is handled like a plain user message', () => {
+  const base = {
+    type: 'message', channel: 'C123', channel_type: 'channel', user: 'U123',
+    ts: '1725000000.000002', event_ts: '1725000000.000002',
+  };
+
+  assert.equal(shouldIgnoreMessageEvent({ ...base, text: 'hello', client_msg_id: 'c-1' }), false);
+  assert.equal(shouldIgnoreMessageEvent({
+    ...base,
+    subtype: 'file_share',
+    text: 'see attached',
+    upload: false,
+    display_as_bot: false,
+    files: [{ id: 'F1', name: 'report.pdf', mimetype: 'application/pdf', size: 1024 }],
+  }), false);
+  assert.equal(shouldIgnoreMessageEvent({
+    ...base,
+    subtype: 'file_share',
+    text: '',
+    upload: false,
+    display_as_bot: false,
+    files: [{ id: 'F2', name: 'photo.png', mimetype: 'image/png', size: 2048 }],
+  }), false);
+});
+
+test('bot messages and every other subtype are still ignored', () => {
+  const base = { type: 'message', channel: 'C123', user: 'U123', ts: '1725000000.000003' };
+
+  for (const subtype of [
+    'bot_message', 'message_changed', 'message_deleted', 'message_replied',
+    'channel_join', 'channel_leave', 'channel_topic', 'me_message',
+  ]) {
+    assert.equal(shouldIgnoreMessageEvent({ ...base, subtype }), true, subtype);
+  }
+});
+
+test('a message marked as from a bot is ignored, file_share included', () => {
+  const base = { type: 'message', channel: 'C123', ts: '1725000000.000004' };
+  const botProfile = { id: 'B123', app_id: 'A123', name: 'other-bot' };
+
+  // GenericMessageEvent posted by an app: bot_id + bot_profile.
+  assert.equal(shouldIgnoreMessageEvent({ ...base, user: 'U999', bot_id: 'B123', bot_profile: botProfile, text: 'hi' }), true);
+  assert.equal(shouldIgnoreMessageEvent({ ...base, user: 'U999', bot_profile: botProfile, text: 'hi' }), true);
+  // FileShareMessageEvent has no bot_id; display_as_bot marks a bot upload.
+  assert.equal(shouldIgnoreMessageEvent({
+    ...base, subtype: 'file_share', user: 'U999', text: '', display_as_bot: true,
+    files: [{ id: 'F3', name: 'export.csv', size: 10 }],
+  }), true);
+  assert.equal(shouldIgnoreMessageEvent({
+    ...base, subtype: 'file_share', user: 'U999', text: '', bot_id: 'B123',
+    files: [{ id: 'F4', name: 'export.csv', size: 10 }],
+  }), true);
+});
+
+test('isBotEvent recognises every bot marker and no user event', () => {
+  const base = { type: 'app_mention', channel: 'C123', ts: '1725000000.000005', text: '<@UBOT123> hi' };
+  const botProfile = { id: 'B123', app_id: 'A123', name: 'other-bot' };
+
+  assert.equal(isBotEvent({ ...base, user: 'U999', bot_id: 'B123' }), true);
+  assert.equal(isBotEvent({ ...base, user: 'U999', bot_profile: botProfile }), true);
+  assert.equal(isBotEvent({ ...base, user: 'U999', display_as_bot: true, files: [{ id: 'F5', name: 'x.csv' }] }), true);
+  assert.equal(isBotEvent({ ...base, user: 'U123' }), false);
+  assert.equal(isBotEvent({ ...base, user: 'U123', display_as_bot: false, files: [{ id: 'F6', name: 'y.csv' }] }), false);
 });

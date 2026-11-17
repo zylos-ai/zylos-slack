@@ -8,25 +8,34 @@ import { App } from '@slack/bolt';
 dotenv.config({ path: path.join(process.env.HOME, 'zylos/.env') });
 
 import { getConfig, watchConfig, stopWatching, saveConfig, DATA_DIR } from './lib/config.js';
-import { initClient, fetchBotIdentity, getBotUserId } from './lib/client.js';
+import { initClient, createLookupClient, fetchBotIdentity, getBotUserId } from './lib/client.js';
 import {
   addReaction, removeReaction, downloadFile, getUserName,
-  fetchHistory, fetchThread,
+  fetchHistory, fetchThread, sendText,
 } from './lib/message.js';
 import {
   getMessageDedupKey, isBotMentioned, resolveUserMentions, shouldHandleGroupMessage,
+  isBotEvent, shouldIgnoreMessageEvent,
 } from './lib/mentions.js';
 import {
   CONNECTION_MODE, DM_POLICY, ENDPOINT_TYPE, GROUP_MODE, SLACK_CHANNEL_TYPE,
 } from './lib/constants.js';
-import { createC4Deliverer, createC4MessageSender } from './lib/c4-delivery.js';
+import {
+  c4ReceiveSupportsOption, createC4MessageSender, createRejectHandler,
+} from './lib/c4-delivery.js';
+import { buildEndpoint } from './lib/endpoint.js';
+import { recordChatType, recordUserDm } from './lib/session-group.js';
+import {
+  buildChannelThreadContext, buildGroupContext,
+  THREAD_CONTEXT_DEADLINE_MS, THREAD_CONTEXT_REQUEST_TIMEOUT_MS,
+} from './lib/thread-context.js';
+import { withTimeout } from './lib/timeout.js';
 import { MessageDeduplicator } from './lib/dedup.js';
+import { describeMessageFiles, getMediaLimits } from './lib/files.js';
 import { isGroupAccessAllowed } from './lib/policy.js';
 
 // ── Constants ──
 
-const C4_RECEIVE = path.join(process.env.HOME,
-  'zylos/.claude/skills/comm-bridge/scripts/c4-receive.js');
 const LOGS_DIR = path.join(DATA_DIR, 'logs');
 const MEDIA_DIR = path.join(DATA_DIR, 'media');
 const TYPING_DIR = path.join(DATA_DIR, 'typing');
@@ -67,23 +76,27 @@ if (config.connection_mode === CONNECTION_MODE.SOCKET && !appToken) {
 
 // Initialize client
 initClient(botToken);
+// Thread context is fetched before delivery: use a bounded client (no
+// retries, short timeout, rate limits fail at once) so a slow Slack API only
+// drops the context instead of stalling the message.
+const contextClient = createLookupClient(botToken, { timeoutMs: THREAD_CONTEXT_REQUEST_TIMEOUT_MS });
 
 // Ensure directories exist
 [LOGS_DIR, MEDIA_DIR, TYPING_DIR].forEach(dir => fs.mkdirSync(dir, { recursive: true }));
 
-const deliverToC4 = createC4Deliverer({ scriptPath: C4_RECEIVE });
+// c4-receive is resolved from $ZYLOS_DIR (default $HOME/zylos) on every call;
+// --session-group is passed only when the installed Core declares it.
 const sendToC4 = createC4MessageSender({
-  deliver: deliverToC4,
   onDelivered: record => {
     console.log(`[slack] Sent to C4: ${record.content.substring(0, 60)}...`);
   },
-  onRetry: (record, error, retryNumber, delay) => {
-    console.warn(`[slack] C4 delivery ${record.msgId} failed (${error.code}), retry ${retryNumber} in ${delay}ms: ${error.message}`);
-  },
-  onFailed: async (record, error) => {
-    console.error(`[slack] C4 delivery ${record.msgId} failed after bounded retries (${error.code}): ${error.message}`);
-    await clearFailedTypingIndicator(record);
-  },
+  // Every outcome is final (never resent). The hourglass is always cleared;
+  // the notice (null when Core already stored the message) is posted only for
+  // DMs and channel messages that @-mention the bot.
+  onRejected: createRejectHandler({
+    clearTypingIndicator: clearFailedTypingIndicator,
+    postNotice: sendRejectNotice,
+  }),
 });
 
 // ── Main ──
@@ -104,8 +117,8 @@ async function main() {
 
   // ── Event: Direct Message ──
   app.event('message', async ({ event, say }) => {
-    // Ignore bot's own messages, subtypes (edits, joins, etc.)
-    if (event.bot_id || event.subtype) return;
+    // Ignore bot messages and subtypes (edits, joins, etc.), except file_share
+    if (shouldIgnoreMessageEvent(event)) return;
     if (event.user === getBotUserId()) return;
 
     const msgKey = getMessageDedupKey(event);
@@ -122,7 +135,7 @@ async function main() {
 
   // ── Event: App Mention (in channels) ──
   app.event('app_mention', async ({ event }) => {
-    if (event.bot_id || event.user === getBotUserId()) return;
+    if (isBotEvent(event) || event.user === getBotUserId()) return;
 
     const msgKey = getMessageDedupKey(event);
     await messageDeduplicator.run(msgKey, () => handleGroupMessage(event, true));
@@ -150,10 +163,26 @@ async function main() {
   setInterval(checkTypingDone, 2000);
 }
 
+// ── Files ──
+
+// Download a message's files within the configured size/time limits and label
+// them for Core (shared by the DM and channel handlers).
+function describeFiles(files) {
+  const { maxBytes, timeoutMs } = getMediaLimits(config);
+  return describeMessageFiles(files, {
+    maxBytes,
+    download: file => downloadFile(file.url_private_download, file.name, { maxBytes, timeoutMs }),
+  });
+}
+
 // ── DM Handler ──
 
 async function handleDM(event) {
   const userId = event.user;
+  // Remember DM vs group (and the user's DM channel) so a bare id used for a
+  // proactive send maps to its session group without an API call.
+  recordChatType(event.channel, ENDPOINT_TYPE.DIRECT_MESSAGE);
+  recordUserDm(userId, event.channel);
   const userName = await getUserName(userId);
 
   // Owner auto-binding
@@ -177,28 +206,8 @@ async function handleDM(event) {
     }
   }
 
-  // Build message content
-  let content = '';
-  let fileLine = '';
-
-  // Handle file attachments
-  if (event.files && event.files.length > 0) {
-    for (const file of event.files) {
-      try {
-        const localPath = await downloadFile(file.url_private_download, file.name);
-        const isImage = file.mimetype?.startsWith('image/');
-        if (isImage) {
-          content += `[image: ${file.name}]\n`;
-        } else {
-          content += `[file: ${file.name}]\n`;
-        }
-        fileLine += `\n---- file: ${localPath}`;
-      } catch (err) {
-        console.warn('[slack] File download failed:', err.message);
-        content += `[file: ${file.name} (download failed)]\n`;
-      }
-    }
-  }
+  // Build message content: file labels, then text
+  let { content, fileLine } = await describeFiles(event.files);
 
   // Text content
   const text = event.text || '';
@@ -209,18 +218,16 @@ async function handleDM(event) {
   let threadContext = '';
   if (event.thread_ts && event.thread_ts !== event.ts) {
     try {
-      const replies = await fetchThread(event.channel, event.thread_ts, 5);
-      if (replies.length > 0) {
+      threadContext = await withTimeout((async () => {
+        const replies = await fetchThread(event.channel, event.thread_ts, 5, contextClient);
         const lines = [];
         for (const r of replies) {
           if (r.ts === event.ts) continue;
           const rName = r.user ? await getUserName(r.user) : 'bot';
           lines.push(`${rName}: ${r.text || '(media)'}`);
         }
-        if (lines.length > 0) {
-          threadContext = `<thread-context>\n${lines.join('\n')}\n</thread-context>\n\n`;
-        }
-      }
+        return lines.length > 0 ? `<thread-context>\n${lines.join('\n')}\n</thread-context>\n\n` : '';
+      })(), THREAD_CONTEXT_DEADLINE_MS, 'thread context');
     } catch (err) {
       console.warn('[slack] Failed to fetch thread context:', err.message);
     }
@@ -247,6 +254,7 @@ async function handleDM(event) {
     content: c4Message,
     channel: event.channel,
     ts: event.ts,
+    threadTs: event.thread_ts,
     hasTypingIndicator: true,
     messageType: ENDPOINT_TYPE.DIRECT_MESSAGE,
     senderName: userName,
@@ -258,6 +266,8 @@ async function handleDM(event) {
 async function handleGroupMessage(event, isMention = false) {
   const channelId = event.channel;
   const userId = event.user;
+  // Channels, private channels and group DMs (mpim) are all groups.
+  recordChatType(channelId, ENDPOINT_TYPE.GROUP);
   const isOwner = userId === config.owner?.user_id;
   const groupConfig = config.groups?.[channelId];
 
@@ -280,22 +290,8 @@ async function handleGroupMessage(event, isMention = false) {
   // Smart mode: receive all but flag non-mentions
   const isSmartNoMention = mode === GROUP_MODE.SMART && !isMention;
 
-  // Build message content
-  let content = '';
-  let fileLine = '';
-
-  if (event.files && event.files.length > 0) {
-    for (const file of event.files) {
-      try {
-        const localPath = await downloadFile(file.url_private_download, file.name);
-        const isImage = file.mimetype?.startsWith('image/');
-        content += isImage ? `[image: ${file.name}]\n` : `[file: ${file.name}]\n`;
-        fileLine += `\n---- file: ${localPath}`;
-      } catch (err) {
-        console.warn('[slack] File download failed:', err.message);
-      }
-    }
-  }
+  // Build message content: file labels, then text
+  let { content, fileLine } = await describeFiles(event.files);
 
   // Slack sends mentions as <@USER_ID>. Keep their readable names in the
   // prompt instead of deleting every mentioned person (including the bot).
@@ -311,14 +307,26 @@ async function handleGroupMessage(event, isMention = false) {
   const maxHistory = (groupConfig?.historyLimit || config.message.context_messages) * 2;
   if (history.length > maxHistory) history.splice(0, history.length - maxHistory);
 
-  // Build group context
+  // Build group context. On a multi-session Core a message inside a thread is
+  // its own session group (group-<channel>:topic-<thread_ts>), so it gets the
+  // thread root and recent replies from Slack (bounded; the in-memory history
+  // is the fallback). An older Core gets the in-memory history as in 0.1.3.
   const contextLimit = groupConfig?.historyLimit || config.message.context_messages;
-  const contextMsgs = history.slice(-contextLimit - 1, -1); // exclude current
-  let groupContext = '';
-  if (contextMsgs.length > 0) {
-    const lines = contextMsgs.map(m => `${m.from}: ${m.text}`);
-    groupContext = `<group-context>\n${lines.join('\n')}\n</group-context>\n\n`;
-  }
+  const groupContext = await buildGroupContext({
+    event,
+    history,
+    limit: contextLimit,
+    supportsSessionGroup: c4ReceiveSupportsOption('--session-group'),
+    fetchThreadContext: () => buildChannelThreadContext({
+      client: contextClient,
+      channel: event.channel,
+      threadTs: event.thread_ts,
+      currentTs: event.ts,
+      limit: contextLimit,
+      getUserName,
+      onError: err => console.warn('[slack] Failed to fetch channel thread context:', err.message),
+    }),
+  });
 
   // Typing indicator (only for mentions or smart with mention)
   if (isMention || !isSmartNoMention) {
@@ -348,10 +356,27 @@ async function handleGroupMessage(event, isMention = false) {
     content: c4Message,
     channel: event.channel,
     ts: event.ts,
+    threadTs: event.thread_ts,
     hasTypingIndicator: isMention || !isSmartNoMention,
+    isMention,
     messageType: ENDPOINT_TYPE.GROUP,
     senderName: userName,
   });
+}
+
+/**
+ * Tell the user the agent will not answer this message (TRY_LATER /
+ * MAYBE_LOST). Posted where a reply would go: the message's thread, as
+ * scripts/send.js does. Only called for DMs and @-mentions
+ * (shouldPostRejectNotice).
+ */
+async function sendRejectNotice(record, notice) {
+  if (!record.channel) return;
+  try {
+    await sendText(record.channel, notice, { thread_ts: record.threadTs || record.ts });
+  } catch (err) {
+    console.error(`[slack] Reject notice for ${record.msgId} failed: ${err.message}`);
+  }
 }
 
 async function clearFailedTypingIndicator(record) {
@@ -394,12 +419,6 @@ function checkTypingDone() {
 }
 
 // ── Helpers ──
-
-function buildEndpoint(channel, type, msgTs, threadTs) {
-  let ep = `${channel}|type:${type}|msg:${msgTs}`;
-  if (threadTs) ep += `|thread:${threadTs}`;
-  return ep;
-}
 
 function logMessage(channelId, entry) {
   const logFile = path.join(LOGS_DIR, `${channelId}.log`);
