@@ -1,6 +1,22 @@
 # Changelog
 
-## 0.2.0 (2026-11-16)
+## 0.2.0 (2026-11-17)
+
+### Summary
+
+- **Multi-session zylos-core support.** Each DM, channel and channel thread is
+  routed to its own Core session group; older Cores keep the 0.1.3 behavior.
+  Proactive sends map bare conversation and user ids to the same groups.
+- **File attachments are now delivered.** Messages with files (Slack
+  `file_share`) reach Core with their downloads, bounded by
+  `media.max_download_size_mb` (default 50) and
+  `media.download_timeout_seconds` (default 30).
+- **Other bots' messages and uploads are ignored**, including when they
+  @-mention this bot.
+- **Action needed when upgrading:** add the group DM scopes and event and
+  reinstall the Slack app (see "Upgrade notes").
+- **Known limitation:** a thread reply that is also sent to the channel
+  (`thread_broadcast`) is still not delivered (zylos-ai/zylos-slack#14).
 
 ### Upgrade notes
 
