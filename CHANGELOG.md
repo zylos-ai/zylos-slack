@@ -2,6 +2,22 @@
 
 ## 0.2.0 (2026-11-16)
 
+### Upgrade notes
+
+Slack apps created from an older README lack some scopes and events this
+version uses. Add them in the Slack app settings, then **reinstall the app** to
+the workspace (Slack applies new scopes only after a reinstall):
+
+- **Proactive send to a bare channel id** (`C…`/`G…`/`D…` without `|type:`)
+  looks up the channel type with Slack `conversations.info` when the id is not
+  in the local cache yet (no message received from it), which needs the
+  `channels:read` and `groups:read` scopes. Without them the lookup fails with
+  `missing_scope`, so the id cannot be mapped to a session group and Core does
+  not send the message.
+- **Group DMs (mpim)** need the `mpim:history` and `mpim:read` scopes and the
+  `message.mpim` bot event subscription (README, "Create Slack App" and
+  "Enable Events"). Without them the bot never receives group DM messages.
+
 ### Added
 
 - **Session groups for multi-session zylos-core.** Each inbound message is
@@ -88,6 +104,13 @@ These also apply on older Cores:
 
 - `scripts/send.js` no longer writes a `<channel>-undefined.done` typing file for
   a proactive send without `msg:`.
+- Messages a user posts with a file attached (Slack subtype `file_share`, with
+  or without text) are delivered again instead of being dropped by the subtype
+  filter. Their text is delivered and the files go through the existing
+  download path (`[file: name]` / `[image: name]` plus a `---- file:` line).
+  All other subtypes (edits, deletions, joins, bot messages, ...) are still
+  ignored. A channel file whose download fails is now listed as
+  `[file: name (download failed)]`, as in DMs, instead of being left out.
 
 ## 0.1.3 (2026-09-08)
 

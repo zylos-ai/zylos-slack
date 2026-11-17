@@ -43,6 +43,15 @@ export const SLACK_CHANNEL_TYPE = Object.freeze({
 });
 export const SLACK_CHANNEL_TYPE_VALUES = enumValues(SLACK_CHANNEL_TYPE);
 
+/**
+ * Slack `message` event subtypes delivered like a plain user message. Every
+ * other subtype (edits, deletions, joins, bot messages, ...) is ignored.
+ */
+export const SLACK_MESSAGE_SUBTYPE = Object.freeze({
+  FILE_SHARE: 'file_share',
+});
+export const SLACK_MESSAGE_SUBTYPE_VALUES = enumValues(SLACK_MESSAGE_SUBTYPE);
+
 export const ENDPOINT_TYPE = Object.freeze({
   DIRECT_MESSAGE: 'dm',
   GROUP: 'group',

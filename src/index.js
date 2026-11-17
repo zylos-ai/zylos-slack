@@ -15,6 +15,7 @@ import {
 } from './lib/message.js';
 import {
   getMessageDedupKey, isBotMentioned, resolveUserMentions, shouldHandleGroupMessage,
+  shouldIgnoreMessageEvent,
 } from './lib/mentions.js';
 import {
   CONNECTION_MODE, DM_POLICY, ENDPOINT_TYPE, GROUP_MODE, SLACK_CHANNEL_TYPE,
@@ -115,8 +116,8 @@ async function main() {
 
   // ── Event: Direct Message ──
   app.event('message', async ({ event, say }) => {
-    // Ignore bot's own messages, subtypes (edits, joins, etc.)
-    if (event.bot_id || event.subtype) return;
+    // Ignore bot messages and subtypes (edits, joins, etc.), except file_share
+    if (shouldIgnoreMessageEvent(event)) return;
     if (event.user === getBotUserId()) return;
 
     const msgKey = getMessageDedupKey(event);
@@ -309,6 +310,7 @@ async function handleGroupMessage(event, isMention = false) {
         fileLine += `\n---- file: ${localPath}`;
       } catch (err) {
         console.warn('[slack] File download failed:', err.message);
+        content += `[file: ${file.name} (download failed)]\n`;
       }
     }
   }

@@ -1,4 +1,4 @@
-import { GROUP_MODE } from './constants.js';
+import { GROUP_MODE, SLACK_MESSAGE_SUBTYPE_VALUES } from './constants.js';
 
 const SLACK_USER_MENTION_PATTERN = /<@([A-Z0-9]+)(?:\|([^>]+))?>/g;
 
@@ -54,4 +54,14 @@ export function shouldHandleGroupMessage(mode, isMention) {
  */
 export function getMessageDedupKey(event) {
   return `${event.channel}-${event.ts}`;
+}
+
+/**
+ * Return whether a Slack `message` event should be ignored: bot messages and
+ * every subtype except a user sharing a file (`file_share`), which carries the
+ * user's text and files like a plain message.
+ */
+export function shouldIgnoreMessageEvent(event) {
+  if (event.bot_id) return true;
+  return Boolean(event.subtype) && !SLACK_MESSAGE_SUBTYPE_VALUES.includes(event.subtype);
 }
