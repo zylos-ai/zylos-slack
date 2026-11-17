@@ -22,6 +22,8 @@ import {
   GROUP_POLICY_VALUES,
   SLACK_CHANNEL_TYPE,
   SLACK_CHANNEL_TYPE_VALUES,
+  SLACK_MESSAGE_SUBTYPE,
+  SLACK_MESSAGE_SUBTYPE_VALUES,
 } from '../src/lib/constants.js';
 
 const enumCases = [
@@ -33,6 +35,7 @@ const enumCases = [
   [GROUP_POLICY, GROUP_POLICY_VALUES, ['disabled', 'allowlist', 'open']],
   [GROUP_MODE, GROUP_MODE_VALUES, ['mention', 'smart']],
   [SLACK_CHANNEL_TYPE, SLACK_CHANNEL_TYPE_VALUES, ['im', 'channel', 'group', 'mpim']],
+  [SLACK_MESSAGE_SUBTYPE, SLACK_MESSAGE_SUBTYPE_VALUES, ['file_share']],
   [ENDPOINT_TYPE, ENDPOINT_TYPE_VALUES, ['dm', 'group']],
   [CLI_TOGGLE, CLI_TOGGLE_VALUES, ['on', 'off']],
 ];

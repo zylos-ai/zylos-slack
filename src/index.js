@@ -15,6 +15,7 @@ import {
 } from './lib/message.js';
 import {
   getMessageDedupKey, isBotMentioned, resolveUserMentions, shouldHandleGroupMessage,
+  isBotEvent, shouldIgnoreMessageEvent,
 } from './lib/mentions.js';
 import {
   CONNECTION_MODE, DM_POLICY, ENDPOINT_TYPE, GROUP_MODE, SLACK_CHANNEL_TYPE,
@@ -30,6 +31,7 @@ import {
 } from './lib/thread-context.js';
 import { withTimeout } from './lib/timeout.js';
 import { MessageDeduplicator } from './lib/dedup.js';
+import { describeMessageFiles, getMediaLimits } from './lib/files.js';
 import { isGroupAccessAllowed } from './lib/policy.js';
 
 // ── Constants ──
@@ -115,8 +117,8 @@ async function main() {
 
   // ── Event: Direct Message ──
   app.event('message', async ({ event, say }) => {
-    // Ignore bot's own messages, subtypes (edits, joins, etc.)
-    if (event.bot_id || event.subtype) return;
+    // Ignore bot messages and subtypes (edits, joins, etc.), except file_share
+    if (shouldIgnoreMessageEvent(event)) return;
     if (event.user === getBotUserId()) return;
 
     const msgKey = getMessageDedupKey(event);
@@ -133,7 +135,7 @@ async function main() {
 
   // ── Event: App Mention (in channels) ──
   app.event('app_mention', async ({ event }) => {
-    if (event.bot_id || event.user === getBotUserId()) return;
+    if (isBotEvent(event) || event.user === getBotUserId()) return;
 
     const msgKey = getMessageDedupKey(event);
     await messageDeduplicator.run(msgKey, () => handleGroupMessage(event, true));
@@ -159,6 +161,18 @@ async function main() {
 
   // Typing indicator check (every 2s)
   setInterval(checkTypingDone, 2000);
+}
+
+// ── Files ──
+
+// Download a message's files within the configured size/time limits and label
+// them for Core (shared by the DM and channel handlers).
+function describeFiles(files) {
+  const { maxBytes, timeoutMs } = getMediaLimits(config);
+  return describeMessageFiles(files, {
+    maxBytes,
+    download: file => downloadFile(file.url_private_download, file.name, { maxBytes, timeoutMs }),
+  });
 }
 
 // ── DM Handler ──
@@ -192,28 +206,8 @@ async function handleDM(event) {
     }
   }
 
-  // Build message content
-  let content = '';
-  let fileLine = '';
-
-  // Handle file attachments
-  if (event.files && event.files.length > 0) {
-    for (const file of event.files) {
-      try {
-        const localPath = await downloadFile(file.url_private_download, file.name);
-        const isImage = file.mimetype?.startsWith('image/');
-        if (isImage) {
-          content += `[image: ${file.name}]\n`;
-        } else {
-          content += `[file: ${file.name}]\n`;
-        }
-        fileLine += `\n---- file: ${localPath}`;
-      } catch (err) {
-        console.warn('[slack] File download failed:', err.message);
-        content += `[file: ${file.name} (download failed)]\n`;
-      }
-    }
-  }
+  // Build message content: file labels, then text
+  let { content, fileLine } = await describeFiles(event.files);
 
   // Text content
   const text = event.text || '';
@@ -296,22 +290,8 @@ async function handleGroupMessage(event, isMention = false) {
   // Smart mode: receive all but flag non-mentions
   const isSmartNoMention = mode === GROUP_MODE.SMART && !isMention;
 
-  // Build message content
-  let content = '';
-  let fileLine = '';
-
-  if (event.files && event.files.length > 0) {
-    for (const file of event.files) {
-      try {
-        const localPath = await downloadFile(file.url_private_download, file.name);
-        const isImage = file.mimetype?.startsWith('image/');
-        content += isImage ? `[image: ${file.name}]\n` : `[file: ${file.name}]\n`;
-        fileLine += `\n---- file: ${localPath}`;
-      } catch (err) {
-        console.warn('[slack] File download failed:', err.message);
-      }
-    }
-  }
+  // Build message content: file labels, then text
+  let { content, fileLine } = await describeFiles(event.files);
 
   // Slack sends mentions as <@USER_ID>. Keep their readable names in the
   // prompt instead of deleting every mentioned person (including the bot).

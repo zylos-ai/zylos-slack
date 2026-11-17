@@ -77,9 +77,16 @@ SLACK_APP_TOKEN=xapp-...        # App-Level Token (Socket Mode)
   "groupPolicy": "allowlist",
   "groupMode": "mention",
   "groups": {},
-  "message": { "context_messages": 10, "useMarkdown": true }
+  "message": { "context_messages": 10, "useMarkdown": true },
+  "media": { "max_download_size_mb": 50, "download_timeout_seconds": 30 }
 }
 ```
+
+`media` limits inbound file downloads. A file over `max_download_size_mb`
+(by Slack's file size, checked before fetching, or by the bytes received) is
+delivered as `[file: name (too large)]`; a download that fails or takes longer
+than `download_timeout_seconds` as `[file: name (download failed)]`. The
+message text is delivered either way.
 
 ## Admin CLI
 

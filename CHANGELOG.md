@@ -1,6 +1,43 @@
 # Changelog
 
-## 0.2.0 (2026-11-16)
+## 0.2.0 (2026-11-17)
+
+### Summary
+
+- **Multi-session zylos-core support.** Each DM, channel and channel thread is
+  routed to its own Core session group; older Cores keep the 0.1.3 behavior.
+  Proactive sends map bare conversation and user ids to the same groups.
+- **File attachments are now delivered.** Messages with files (Slack
+  `file_share`) reach Core with their downloads, bounded by
+  `media.max_download_size_mb` (default 50) and
+  `media.download_timeout_seconds` (default 30).
+- **Other bots' messages and uploads are ignored**, including when they
+  @-mention this bot.
+- **Action needed when upgrading:** add the group DM scopes and event and
+  reinstall the Slack app (see "Upgrade notes").
+- **Known limitation:** a thread reply that is also sent to the channel
+  (`thread_broadcast`) is still not delivered (zylos-ai/zylos-slack#14).
+
+### Upgrade notes
+
+Slack applies added scopes and event subscriptions only after the app is
+**reinstalled** to the workspace.
+
+- **Group DMs (mpim) are new requirements.** Apps set up from the 0.1.x README
+  lack the `mpim:history` and `mpim:read` scopes and the `message.mpim` bot
+  event. Add them (README, "Create Slack App" and "Enable Events") and
+  reinstall the app. Without them the bot never receives group DM messages, and
+  a proactive send to a bare group DM id fails its lookup with `missing_scope`.
+- **Proactive send to a bare conversation id** (`C…`/`G…`/`D…` without
+  `|type:`) that the service has not received a message from yet looks up the
+  conversation type with Slack `conversations.info`. That call needs the read
+  scope of the conversation's own type: `channels:read` (public channel),
+  `groups:read` (private channel), `im:read` (DM) or `mpim:read` (group DM).
+  The first three have been in the README since 0.1.0, so an app set up from
+  it only lacks `mpim:read`. If the lookup still fails with `missing_scope`,
+  the app was configured with fewer scopes than the README lists: add the
+  scope for that conversation type and reinstall. Until then the id cannot be
+  mapped to a session group and Core does not send the message.
 
 ### Added
 
@@ -88,6 +125,25 @@ These also apply on older Cores:
 
 - `scripts/send.js` no longer writes a `<channel>-undefined.done` typing file for
   a proactive send without `msg:`.
+- Messages a user posts with a file attached (Slack subtype `file_share`, with
+  or without text) are now delivered; 0.1.x dropped them with every other
+  subtype, so DM and channel file uploads never reached Core. Their text is
+  delivered and the files go through the existing download path
+  (`[file: name]` / `[image: name]` plus a `---- file:` line). All other
+  subtypes (edits, deletions, joins, bot messages, ...) are still ignored, and
+  a `message` or `app_mention` event marked as from a bot (`bot_id`,
+  `bot_profile` or `display_as_bot`) is ignored whatever its subtype, so
+  another bot that @-mentions this one is not delivered and its files are not
+  downloaded.
+- Inbound file downloads are bounded: a file over `media.max_download_size_mb`
+  (default 50, as in the wecom component), by Slack's file size before
+  fetching or by the bytes received, is not saved and is listed as
+  `[file: name (too large)]`. A download is aborted after
+  `media.download_timeout_seconds` (default 30) and, like any other failed
+  download, listed as `[file: name (download failed)]`, in DMs and channels
+  (a channel file whose download failed used to be left out). A refused
+  response (over the declared size, or not OK) has its body released at once
+  instead of holding the connection until the timeout.
 
 ## 0.1.3 (2026-09-08)
 
