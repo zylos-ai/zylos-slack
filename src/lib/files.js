@@ -36,13 +36,28 @@ export function getMediaLimits(config) {
 }
 
 /**
+ * Release a response body that will not be read, so its connection is not
+ * held until the download timeout.
+ */
+export async function discardBody(response) {
+  try {
+    await response.body?.cancel();
+  } catch {
+    // Already consumed, locked or errored: nothing left to release.
+  }
+}
+
+/**
  * Read a fetch Response body, failing with FileTooLargeError as soon as more
  * than maxBytes arrive (the declared size may be missing or wrong).
  * @returns {Promise<Buffer>}
  */
 export async function readBodyWithinLimit(response, maxBytes) {
   const declared = Number(response.headers?.get?.('content-length') || 0);
-  if (declared > maxBytes) throw new FileTooLargeError(maxBytes);
+  if (declared > maxBytes) {
+    await discardBody(response);
+    throw new FileTooLargeError(maxBytes);
+  }
   if (!response.body) return Buffer.alloc(0);
 
   const reader = response.body.getReader();

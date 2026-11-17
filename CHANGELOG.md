@@ -115,15 +115,19 @@ These also apply on older Cores:
   delivered and the files go through the existing download path
   (`[file: name]` / `[image: name]` plus a `---- file:` line). All other
   subtypes (edits, deletions, joins, bot messages, ...) are still ignored, and
-  a `message` event marked as from a bot (`bot_id`, `bot_profile` or
-  `display_as_bot`) is ignored whatever its subtype.
+  a `message` or `app_mention` event marked as from a bot (`bot_id`,
+  `bot_profile` or `display_as_bot`) is ignored whatever its subtype, so
+  another bot that @-mentions this one is not delivered and its files are not
+  downloaded.
 - Inbound file downloads are bounded: a file over `media.max_download_size_mb`
   (default 50, as in the wecom component), by Slack's file size before
   fetching or by the bytes received, is not saved and is listed as
   `[file: name (too large)]`. A download is aborted after
   `media.download_timeout_seconds` (default 30) and, like any other failed
   download, listed as `[file: name (download failed)]`, in DMs and channels
-  (a channel file whose download failed used to be left out).
+  (a channel file whose download failed used to be left out). A refused
+  response (over the declared size, or not OK) has its body released at once
+  instead of holding the connection until the timeout.
 
 ## 0.1.3 (2026-09-08)
 

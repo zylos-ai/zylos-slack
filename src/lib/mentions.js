@@ -57,16 +57,22 @@ export function getMessageDedupKey(event) {
 }
 
 /**
+ * Return whether a Slack event (`message` or `app_mention`) was posted by a
+ * bot: `bot_id` or `bot_profile` (plain and `bot_message` events) or
+ * `display_as_bot` (the bot marker of @slack/types `FileShareMessageEvent`,
+ * which has no `bot_id`). A user's own message never sets any of them truthy.
+ * This is the single bot test for both event handlers.
+ */
+export function isBotEvent(event) {
+  return Boolean(event.bot_id || event.bot_profile || event.display_as_bot);
+}
+
+/**
  * Return whether a Slack `message` event should be ignored: messages from a
- * bot and every subtype except a user sharing a file (`file_share`), which
- * carries the user's text and files like a plain message.
- *
- * A bot is recognised by `bot_id` or `bot_profile` (plain and `bot_message`
- * events) or `display_as_bot` (the bot marker of @slack/types
- * `FileShareMessageEvent`, which has no `bot_id`). A user's own message never
- * sets any of them truthy.
+ * bot (isBotEvent) and every subtype except a user sharing a file
+ * (`file_share`), which carries the user's text and files like a plain message.
  */
 export function shouldIgnoreMessageEvent(event) {
-  if (event.bot_id || event.bot_profile || event.display_as_bot) return true;
+  if (isBotEvent(event)) return true;
   return Boolean(event.subtype) && !SLACK_MESSAGE_SUBTYPE_VALUES.includes(event.subtype);
 }

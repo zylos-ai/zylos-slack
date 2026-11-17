@@ -2,7 +2,7 @@ import fs from 'fs';
 import path from 'path';
 import { getClient } from './client.js';
 import { DATA_DIR } from './config.js';
-import { getMediaLimits, readBodyWithinLimit } from './files.js';
+import { discardBody, getMediaLimits, readBodyWithinLimit } from './files.js';
 
 const MEDIA_DIR = path.join(DATA_DIR, 'media');
 
@@ -148,7 +148,10 @@ export async function downloadFile(url, filename, {
     signal: AbortSignal.timeout(timeoutMs),
   });
 
-  if (!response.ok) throw new Error(`Download failed: ${response.status}`);
+  if (!response.ok) {
+    await discardBody(response);
+    throw new Error(`Download failed: ${response.status}`);
+  }
 
   const buffer = await readBodyWithinLimit(response, maxBytes);
   fs.mkdirSync(MEDIA_DIR, { recursive: true });

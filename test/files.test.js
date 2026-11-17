@@ -98,6 +98,30 @@ test('the body read stops once it exceeds the cap, whatever the declared size', 
   assert.equal((await readBodyWithinLimit(streamResponse([chunk]), 100)).length, 60);
 });
 
+// A streamed response that records whether its body was cancelled.
+function trackedResponse(init) {
+  const state = { cancelled: false };
+  const body = new ReadableStream({
+    pull(controller) { controller.enqueue(new Uint8Array(10)); },
+    cancel() { state.cancelled = true; },
+  });
+  return { state, response: new Response(body, init) };
+}
+
+test('an unread body is released when the download is refused', async () => {
+  const tooLarge = trackedResponse({ status: 200, headers: { 'content-length': '1000' } });
+  await assert.rejects(downloadFile('https://files.slack.test/declared', 'd.bin', {
+    maxBytes: 100, timeoutMs: 1000, fetchImpl: async () => tooLarge.response,
+  }), FileTooLargeError);
+  assert.equal(tooLarge.state.cancelled, true);
+
+  const notOk = trackedResponse({ status: 403 });
+  await assert.rejects(downloadFile('https://files.slack.test/denied', 'e.bin', {
+    maxBytes: 100, timeoutMs: 1000, fetchImpl: async () => notOk.response,
+  }), /Download failed: 403/);
+  assert.equal(notOk.state.cancelled, true);
+});
+
 test('downloadFile saves a body within the cap to the media directory', async () => {
   const savedPath = await downloadFile('https://files.slack.test/a', 'a b.txt', {
     maxBytes: 100,

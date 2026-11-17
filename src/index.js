@@ -15,7 +15,7 @@ import {
 } from './lib/message.js';
 import {
   getMessageDedupKey, isBotMentioned, resolveUserMentions, shouldHandleGroupMessage,
-  shouldIgnoreMessageEvent,
+  isBotEvent, shouldIgnoreMessageEvent,
 } from './lib/mentions.js';
 import {
   CONNECTION_MODE, DM_POLICY, ENDPOINT_TYPE, GROUP_MODE, SLACK_CHANNEL_TYPE,
@@ -135,7 +135,7 @@ async function main() {
 
   // ── Event: App Mention (in channels) ──
   app.event('app_mention', async ({ event }) => {
-    if (event.bot_id || event.user === getBotUserId()) return;
+    if (isBotEvent(event) || event.user === getBotUserId()) return;
 
     const msgKey = getMessageDedupKey(event);
     await messageDeduplicator.run(msgKey, () => handleGroupMessage(event, true));

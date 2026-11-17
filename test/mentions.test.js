@@ -5,6 +5,7 @@ import {
   getMessageDedupKey,
   isBotMentioned,
   resolveUserMentions,
+  isBotEvent,
   shouldHandleGroupMessage,
   shouldIgnoreMessageEvent,
 } from '../src/lib/mentions.js';
@@ -111,4 +112,15 @@ test('a message marked as from a bot is ignored, file_share included', () => {
     ...base, subtype: 'file_share', user: 'U999', text: '', bot_id: 'B123',
     files: [{ id: 'F4', name: 'export.csv', size: 10 }],
   }), true);
+});
+
+test('isBotEvent recognises every bot marker and no user event', () => {
+  const base = { type: 'app_mention', channel: 'C123', ts: '1725000000.000005', text: '<@UBOT123> hi' };
+  const botProfile = { id: 'B123', app_id: 'A123', name: 'other-bot' };
+
+  assert.equal(isBotEvent({ ...base, user: 'U999', bot_id: 'B123' }), true);
+  assert.equal(isBotEvent({ ...base, user: 'U999', bot_profile: botProfile }), true);
+  assert.equal(isBotEvent({ ...base, user: 'U999', display_as_bot: true, files: [{ id: 'F5', name: 'x.csv' }] }), true);
+  assert.equal(isBotEvent({ ...base, user: 'U123' }), false);
+  assert.equal(isBotEvent({ ...base, user: 'U123', display_as_bot: false, files: [{ id: 'F6', name: 'y.csv' }] }), false);
 });
